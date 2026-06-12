@@ -1,0 +1,12 @@
+[package]
+name = "host-firewall-ebpf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya-ebpf = "0.1.1"
+host-firewall-common = { path = "../host-firewall-common" }
+
+[[bin]]
+name = "host-firewall-xdp"
+path = "src/main.rs"
