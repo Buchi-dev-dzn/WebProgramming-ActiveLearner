@@ -63,6 +63,45 @@ subgraph Linux_VM[Linux VM]
   HIDS[HIDS/HIPS] -.host monitor.-> Back
 end
 ```
+```mermaid
+flowchart LR
+    Client[Client<br/>Frontend]
+
+    subgraph VM[VM]
+        direction LR
+
+        FW[External Firewall<br/>L3 / L4<br/>nftables / Nginx]
+        IPS[IPS]
+        WAF[WAF]
+
+        subgraph Backend[Backend]
+            direction LR
+
+            subgraph DMZ[DMZ / Docker 1]
+                RP[Reverse Proxy<br/>Nginx]
+            end
+
+            subgraph APP[Application / Docker 2]
+                IFW[Internal Firewall<br/>nftables / Nginx]
+                API[API]
+                FastAPI[Backend Application<br/>Python / FastAPI]
+            end
+
+            subgraph DBLayer[Database / Docker 3]
+                DB[(DB)]
+            end
+        end
+    end
+
+    Client -->|443 / 80| FW
+    FW --> IPS
+    IPS --> WAF
+    WAF --> RP
+    RP --> IFW
+    IFW --> API
+    API --> FastAPI
+    FastAPI --> DB
+```
 
 ### この図が示していること
 
