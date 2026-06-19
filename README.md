@@ -18,14 +18,11 @@ Docker Compose を使って、外部公開レイヤー、リバースプロキ�
   - Node.js
   - PostgreSQL
   - Redis
-  - Rust 製 host firewall
 - 現在このリポジトリに存在する主要要素
+  - `external-firewall`
   - `waf`
   - `nginx` (`reverse-proxy` 用設定)
   - `backend`
-  - `host-firewall`
-  - `host-firewall-ebpf`
-  - `host-firewall-common`
   - `nids-hids`
   - `logs`
 
@@ -94,8 +91,6 @@ end
   - 永続データ保存先
 - `redis`
   - 補助データストア
-- `host-firewall`
-  - Linux VM ホスト境界での L3/L4 制御
 
 未実装または構想段階の要素:
 
@@ -104,6 +99,9 @@ end
   - 本来のクラウド外周、NW 機器、または上位ファイアウォール相当
 - `NIPS`
   - 通信を遮断可能な侵入防止レイヤー
+- `FW2 / Internal Firewall`
+  - 理想構成では reverse proxy 後段の内部境界
+  - 現時点では未実装
 - `API Gateway`
   - 現時点では専用コンポーネントなし
 - `NIDS`
@@ -163,23 +161,7 @@ end
 - `80/443` 以外は FW1 のポリシーで拒否される
 - `external-firewall` と `waf` の責務差を説明できる
 
-### Step 3: ホスト境界の防御を入れる
-
-目的:
-
-- コンテナ到達前に、Linux VM ホストで不要ポートを落とす
-
-追加要素:
-
-- `host-firewall`
-
-確認したいこと:
-
-- 公開対象ポートだけを許可できる
-- 非公開ポートへは到達できない
-- Docker の公開設定と host firewall の責務差を説明できる
-
-### Step 4: WAF レイヤーを強化する
+### Step 3: WAF レイヤーを強化する
 
 目的:
 
@@ -196,6 +178,23 @@ end
 
 - 明らかな不正リクエストが WAF で止まる
 - 正常トラフィックは `reverse-proxy` に流れる
+
+### Step 4: Internal Firewall を入れる
+
+目的:
+
+- reverse proxy 後段に内部境界を置く
+- backend / API Gateway 側へ流す通信をさらに絞る
+
+追加候補:
+
+- `FW2`
+- 宛先ポートや経路を限定する内部ポリシー
+
+確認したいこと:
+
+- `FW1` と `FW2` の責務差を説明できる
+- backend 側に流れる通信の境界を明示できる
 
 ### Step 5: ネットワーク監視レイヤーを加える
 
@@ -237,8 +236,8 @@ end
 
 検討項目:
 
+- `FW2` をどの実装方式で置くか
 - `API Gateway` を独立させるか
-- `External Firewall` をどのレイヤーで表現するか
 - `NIPS` を実装に含めるか、論理構成としてのみ扱うか
 - TLS 終端位置を WAF に置くか別レイヤーに分けるか
 
@@ -253,8 +252,6 @@ end
 - [backend](/home/buchi/infra/backend)
   - backend API
   - `GET /health`, `GET /api/health`, `GET /api/info`
-- [host-firewall](/home/buchi/infra/host-firewall)
-  - ホストファイアウォール実装
 - [nids-hids](/home/buchi/infra/nids-hids)
   - NIDS/HIDS の構成メモ
 - [logs](/home/buchi/infra/logs)
