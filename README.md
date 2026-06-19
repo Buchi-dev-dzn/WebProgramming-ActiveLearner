@@ -82,6 +82,7 @@ end
   - 外部公開の入口
   - `waf` より前段の TCP 境界
   - 送信元は `Any`、宛先は `80/443` のみを `waf` に通す
+  - 必要なら `nftables` により host のカーネル層でも同じポリシーを適用できる
 - `reverse-proxy`
   - `nginx/` 配下の設定で backend へ中継
 - `backend-api`
@@ -134,6 +135,7 @@ end
 
 - `external-firewall` が `80/443` を受ける
 - `external-firewall` が送信元 `Any` で `80/443` だけを `waf` に転送する
+- 必要なら `external-firewall/apply-nft.sh` で、host の `input` chain でも `80/443` 以外を落とせる
 - `waf` が HTTP/HTTPS を検査する
 - `reverse-proxy` が `backend-api` へ転送する
 - `backend-api` が `PostgreSQL` / `Redis` の接続状態を返す
@@ -143,6 +145,12 @@ end
   - WAF / reverse proxy / backend を通した集約ヘルスチェック
 - `GET /api/info`
   - 現在の構成情報を返す
+
+現時点の結果:
+
+- FW1 は `nginx stream` によるユーザ空間の L4 境界として動作する
+- あわせて `nftables` を使った FW1 kernel policy 用スクリプトを追加した
+- ただし、`nftables` の host 実適用と外部クライアントからの再確認は未実施
 
 ### Step 2: External Firewall を入れる
 
@@ -159,6 +167,7 @@ end
 
 - Mac からは `80/443` に到達できる
 - `80/443` 以外は FW1 のポリシーで拒否される
+- `nftables` を併用した場合は、L3/L4 段階で `waf` に届く前に落とせる
 - `external-firewall` と `waf` の責務差を説明できる
 
 ### Step 3: WAF レイヤーを強化する
@@ -245,6 +254,7 @@ end
 
 - [external-firewall](/home/buchi/infra/external-firewall)
   - `waf` の前段に置く TCP firewall
+  - `nftables` を使った FW1 kernel policy もここに置く
 - [waf](/home/buchi/infra/waf)
   - 外部公開の入口
 - [nginx](/home/buchi/infra/nginx)
