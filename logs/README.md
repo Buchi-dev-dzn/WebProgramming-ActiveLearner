@@ -4,6 +4,8 @@
 
 ## サブディレクトリ
 
+- `external-firewall/`
+  - external firewall レイヤーのアクセスログとエラーログ
 - `waf/`
   - WAF レイヤーのアクセスログとエラーログ
 - `nginx/`

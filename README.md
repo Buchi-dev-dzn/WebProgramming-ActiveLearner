@@ -1,377 +1,271 @@
-# Security EC Base Infrastructure
+# Security EC Base
 
-Linux VM 上に、Mac からアクセスする前提のバックエンド基盤です。現時点では、Host Firewall, WAF, reverse proxy, backend, data layer の分離と、監視系を別レイヤーに逃がす構成までをベースとして用意しています。
+このリポジトリは、EC 系サービスを想定した多層防御インフラの検証用ベース構成です。  
+Docker Compose を使って、外部公開レイヤー、リバースプロキシ、バックエンド、データストアを段階的に組み立てる前提で整理しています。
 
-## このディレクトリで作ったもの
+現時点では、Step 1 の最小疎通構成を実装済みとしつつ、最終的に目指す理想構成とのあいだに差があります。  
+この README ではその差を明示しながら、全体像と今後の進め方を一つの入口にまとめます。
 
-- `docker-compose.yml`
-  - `waf`, `reverse-proxy`, `backend-api`, `postgres`, `redis`, `log-viewer` の最小構成
-  - `public_net`, `edge_net`, `app_net`, `db_net`, `monitor_net` を分離
-- `waf/`
-  - 外部公開の最前段に置く簡易 WAF レイヤー
-  - 明らかなスキャンや不正パターンを早い段階で拒否
-- `nginx/`
-  - WAF の後段で受ける reverse proxy
-  - `/api/...` のみを backend に転送
-- `backend/`
-  - 疎通確認用の最小 Node.js API
-  - `/health`, `/api/info` を返す
-- `host-firewall/`
-  - Linux VM ホスト側で適用する Rust 製 firewall CLI
-  - 許可 TCP port のホワイトリストに特化した L3/L4 packet filter
-- `firewall-lab/`
-  - Rust 製の TCP プローブ
-  - Firewall が L3/L4 でポート遮断できているかの確認用
-- `nids-hids/`
-  - NIDS/NIPS と HIDS をどこに置くかの整理メモ
-- `logs/`
-  - waf / nginx / backend / postgres のログ保存先
+## 基本情報
 
-## 設計意図
+- 目的
+  - 多層防御を前提にしたインフラ構成を段階的に検証する
+  - WAF、リバースプロキシ、ホストファイアウォール、監視系の責務分離を整理する
+  - 最終的に「どこで何を防ぐか」を説明できる構成にする
+- 主な実装技術
+  - Docker Compose
+  - Nginx
+  - Node.js
+  - PostgreSQL
+  - Redis
+  - Rust 製 host firewall
+- 現在このリポジトリに存在する主要要素
+  - `waf`
+  - `nginx` (`reverse-proxy` 用設定)
+  - `backend`
+  - `host-firewall`
+  - `host-firewall-ebpf`
+  - `host-firewall-common`
+  - `nids-hids`
+  - `logs`
 
-Frontend は Mac 側で実行し、Linux VM 上にはサーバー系のみを置く前提です。そのため、外部公開対象は `waf` のみで、`reverse-proxy`, `backend-api`, `postgres`, `redis` を直接公開しない構成にしています。
+## 理想とする全体像
 
-想定経路:
-
-```text
-[Mac Frontend / Browser]
-        |
-        v
-[Host Firewall on Linux VM]
-   |
-   v
-[waf]
-   |
-   v
-[reverse-proxy]
-   |
-   v
-[backend-api]
-   |
-   v
-[postgres / redis]
-```
-
-`NIDS/NIPS` と `HIDS` はこの直列経路に挟むのではなく、ホスト境界や VM 自体を監視する別レイヤーとして追加する前提です。
-
-## 通信経路とサービス関係
-
-Mermaid で表すと、現時点の通信経路は次のようになります。
+以下は、このリポジトリで最終的に説明対象としたい論理構成です。  
+これは「現時点で完全に実装済みの構成」ではなく、「目指す全体像」です。
 
 ```mermaid
-flowchart LR
-    mac[Mac Frontend / Browser]
-    fw[Host Firewall<br/>nftables]
-    waf[waf<br/>nginx:80/443]
-    rp[reverse-proxy<br/>nginx]
-    be[backend-api<br/>node:8080]
-    pg[(postgres:5432)]
-    rd[(redis:6379)]
-    gv[log-viewer<br/>grafana:3000]
-    nids[NIDS/NIPS<br/>host-side sensor]
-    hids[HIDS<br/>host / VM agent]
+graph TD
+Client --> FW1[External Firewall]
+FW1 --> NIPS
 
-    mac -->|HTTP/HTTPS| fw
-    fw -->|allow 80/443| waf
-    waf -->|forward over edge_net| rp
-    rp -->|/api/* over app_net| be
-    be -->|SQL over db_net| pg
-    be -->|cache/session over db_net| rd
+subgraph Cloud_or_Edge[外部 / エッジレイヤー]
+  NIPS --> WAF[WAF / クラウド型またはリバースプロキシ型]
+end
 
-    fw -. inspect .-> nids
-    mac -. traffic seen by .-> nids
-    fw -. host events .-> hids
+WAF --> RP[Reverse Proxy]
 
-    waf -. monitor_net .-> gv
-    rp -. monitor_net .-> gv
-    be -. monitor_net .-> gv
-    pg -. monitor_net .-> gv
+subgraph Linux_VM[Linux VM]
+  subgraph DMZ
+    RP
+  end
+
+  RP --> FW2[Internal Firewall]
+
+  subgraph AppZone[Application Zone / Internal Network]
+    FW2 --> Back[Backend Application Server]
+    FW2 --> API[API Gateway]
+    API --> Back
+  end
+
+  subgraph DataZone[Database Zone]
+    Back --> DB[(Database)]
+  end
+
+  NIDS[NIDS] -.monitor.-> FW2
+  HIDS[HIDS/HIPS] -.host monitor.-> Back
+end
 ```
 
-ポイント:
+### この図が示していること
 
-- 外部から入れるのは `waf` の `80/443` だけ
-- `reverse-proxy` は `edge_net` 経由で `waf` からのみ到達する前提
-- `backend-api` は `app_net` 経由で `reverse-proxy` からのみ到達する前提
-- `postgres` と `redis` は `db_net` 上に閉じ、`backend-api` からのみ利用する前提
-- `NIDS/NIPS` と `HIDS` は通信本線の直列部品ではなく、別レイヤーの監視担当
-- `log-viewer` は通常の業務通信経路には入らず、`monitor_net` 側の監視・可視化用の足場
+- 外部から内部までを 1 台のサーバや 1 個のコンテナで受けるのではなく、役割ごとに層を分ける
+- 防御ポイントを HTTP レイヤーだけでなく、L3/L4、ネットワーク監視、ホスト監視まで分散させる
+- 通信の本線に入る要素と、監視として横から見る要素を分けて整理する
 
-## ネットワークレイヤーごとの動き
+## 現在の実装範囲
 
-レイヤーごとに分けると、どの通信がどこで止まり、どこから先に進めるかは次のようになります。
+現時点でこのリポジトリにある実装は、理想構成の一部です。
 
-```mermaid
-flowchart TB
-    internet[Client Layer<br/>Mac Frontend / Browser]
-    host[Host Boundary Layer<br/>Linux VM + Firewall]
+- `waf`
+  - `external-firewall` 後段の HTTP/HTTPS ガード
+  - Nginx ベースの簡易ガード
+  - 自己署名 TLS により `443` を終端する
+- `external-firewall`
+  - 外部公開の入口
+  - `waf` より前段の TCP 境界
+  - 送信元は `Any`、宛先は `80/443` のみを `waf` に通す
+- `reverse-proxy`
+  - `nginx/` 配下の設定で backend へ中継
+- `backend-api`
+  - `backend/server.js` の最小 Node.js API
+  - `PostgreSQL` / `Redis` の状態を返すヘルスチェック付き
+- `postgres`
+  - 永続データ保存先
+- `redis`
+  - 補助データストア
+- `host-firewall`
+  - Linux VM ホスト境界での L3/L4 制御
 
-    subgraph public[Public Edge Layer / public_net]
-        waf2[waf]
-    end
+未実装または構想段階の要素:
 
-    subgraph edge[Proxy Relay Layer / edge_net]
-        rp2[reverse-proxy]
-    end
+- クラウド上の `External Firewall`
+  - 現在は Docker 上の `external-firewall` で代替
+  - 本来のクラウド外周、NW 機器、または上位ファイアウォール相当
+- `NIPS`
+  - 通信を遮断可能な侵入防止レイヤー
+- `API Gateway`
+  - 現時点では専用コンポーネントなし
+- `NIDS`
+  - 監視用途の IDS は構成メモ段階
+- `HIDS/HIPS`
+  - ホスト監視は構成メモ段階
 
-    subgraph app[Application Layer / app_net]
-        be2[backend-api]
-    end
+## ステップごとの進め方
 
-    subgraph data[Data Layer / db_net]
-        pg2[(postgres)]
-        rd2[(redis)]
-    end
+このリポジトリは、最初から理想形を一気に作るより、段階ごとに責務を足していく方が整理しやすいです。  
+以下は、README 上でも追跡しやすい推奨ステップです。
 
-    subgraph monitor[Monitoring Layer / monitor_net]
-        waf_mon[waf]
-        rp_mon[reverse-proxy]
-        be_mon[backend-api]
-        pg_mon[(postgres)]
-        gv2[log-viewer]
-    end
+### Step 1: 最小疎通構成を作る
 
-    subgraph detect[Detection Layer / host-side]
-        nids2[NIDS/NIPS]
-        hids2[HIDS]
-    end
+目的:
 
-    internet -->|request| host
-    host -->|80/443 only| waf2
-    waf2 -->|filtered HTTP| rp2
-    rp2 -->|/api/*| be2
-    be2 -->|DB access| pg2
-    be2 -->|cache/session| rd2
+- まず通信の本線だけを成立させる
+- 各レイヤーの役割を最小限で確認する
 
-    internet -. network inspection .-> nids2
-    host -. host inspection .-> hids2
-    waf2 -. logs/metrics .-> waf_mon
-    rp2 -. logs/metrics .-> rp_mon
-    be2 -. logs/metrics .-> be_mon
-    pg2 -. logs/metrics .-> pg_mon
-    waf_mon -. visualize .-> gv2
-    rp_mon -. visualize .-> gv2
-    be_mon -. visualize .-> gv2
-    pg_mon -. visualize .-> gv2
-```
+構成:
 
-各レイヤーの見え方:
+- `external-firewall`
+- `waf`
+- `reverse-proxy`
+- `backend-api`
+- `postgres`
+- `redis`
 
-- Client Layer
-  - Mac 側の frontend や browser が HTTP/HTTPS リクエストを送る
-- Host Boundary Layer
-  - Linux VM の Firewall が公開ポートを絞り、Docker に入る前の入口制御になる
-- Public Edge Layer
-  - `waf` だけが外部公開され、リクエストの最初の受け口になる
-- Proxy Relay Layer
-  - `reverse-proxy` が WAF の後段でルーティングだけを担当する
-- Application Layer
-  - `backend-api` が業務 API を処理するが、外部から直接は見えない
-- Data Layer
-  - `postgres` と `redis` が内部データ処理だけを担当し、外部とは直接つながらない
-- Monitoring Layer
-  - 監視、ログ収集、可視化のための別レイヤーで、本線の API 通信とは分離して拡張する
-- Detection Layer
-  - `NIDS/NIPS` と `HIDS` が通信経路の横で監視し、直列には入らない
+実装したこと:
 
-この構成により、外部からの通信は Host Firewall を通過した後に `public_net` の `waf` で受け、必要なものだけを `edge_net`, `app_net`, `db_net` と段階的に進める構造になります。
-
-## ネットワーク構成
-
-### `public_net`
-
-- 役割: 外部入口
-- 所属: `waf`
-- 特徴: VM 外から見えるレイヤー
-
-### `edge_net`
-
-- 役割: WAF と reverse proxy の中継
-- 所属: `waf`, `reverse-proxy`
-- 特徴: `internal: true`
-
-### `app_net`
-
-- 役割: proxy と backend の中継
-- 所属: `reverse-proxy`, `backend-api`
-- 特徴: `internal: true`
-
-### `db_net`
-
-- 役割: backend と DB/Redis の接続
-- 所属: `backend-api`, `postgres`, `redis`
-- 特徴: `internal: true`
-
-### `monitor_net`
-
-- 役割: 監視、ログ収集、可視化の追加先
-- 所属: `reverse-proxy`, `backend-api`, `postgres`, `log-viewer`
-- 特徴: `internal: true`
-
-`internal: true` のネットワークは Docker ホスト外から直接到達できません。これにより、`reverse-proxy`, `backend-api`, `postgres`, `redis` は外部から直接叩けない前提になります。
-
-## 防御レイヤーの役割
-
-### `Host Firewall`
-
-- 役割:
-  - VM ホストの入口で `22`, `80`, `443` のみに制限する
-  - Docker に入る前に不要通信を落とす
-- 実装場所:
-  - `host-firewall/src/main.rs`
-
-### `waf`
-
-- イメージ: `nginx:1.27-alpine`
-- 公開ポート: `80`, `443`
-- 役割:
-  - 外部公開の最前段
-  - 危険な User-Agent や明らかな攻撃文字列を早い段階で拒否
-  - 正常な HTTP リクエストだけを `reverse-proxy` に渡す
-
-### `NIDS/NIPS`
-
-- 役割:
-  - 通信経路の横でトラフィックを監視・検査する
-  - スキャン、異常通信、シグネチャに基づく検知の担当
-- 実装方針:
-  - compose の直列サービスにはせず、ホスト側で扱う
-
-### `HIDS`
-
-- 役割:
-  - VM 内のプロセス、認証、ファイル変更、異常挙動を監視する
-- 実装方針:
-  - backend 前段には置かず、ホスト監視の別レイヤーで扱う
-
-## 各サービスの役割
-
-### `reverse-proxy`
-
-- イメージ: `nginx:1.27-alpine`
-- 公開方法: `ports` なし
-- 役割:
-  - `waf` の後段に置く reverse proxy
-  - `/api/...` を backend に転送
-
-### `backend-api`
-
-- イメージ: `node:22-alpine`
-- 公開方法: `expose 8080` のみ
-- 役割:
-  - 内部 API
-  - 現時点では疎通確認用のダミー実装
-  - ログを `./logs/backend` に保存
-
-### `postgres`
-
-- イメージ: `postgres:16-alpine`
-- 公開方法: `expose 5432` のみ
-- 役割:
-  - アプリケーションデータの保存
-  - まだ schema や migration は未追加
-
-### `redis`
-
-- イメージ: `redis:7-alpine`
-- 公開方法: `expose 6379` のみ
-- 役割:
-  - 将来の session / cache / rate limit / queue 用
-
-### `log-viewer`
-
-- イメージ: `grafana/grafana:11.1.0`
-- 役割:
-  - 後続の可視化基盤の足場
-  - `monitoring` profile を付けているため、常時起動は必須ではない
-
-## 現時点の到達性
-
-- Mac から見えるべきもの:
-  - `waf:80`
-  - `waf:443`
-- Mac から見えてはいけないもの:
-  - `reverse-proxy:80`
-  - `backend-api:8080`
-  - `postgres:5432`
-  - `redis:6379`
-
-この構成では、`reverse-proxy` と backend は `ports:` で公開せず内部ネットワークに閉じるため、WAF を経由しない直接アクセスを避ける設計です。
-
-## nginx の役割
-
-`nginx/conf.d/default.conf` では次を設定しています。
-
+- `external-firewall` が `80/443` を受ける
+- `external-firewall` が送信元 `Any` で `80/443` だけを `waf` に転送する
+- `waf` が HTTP/HTTPS を検査する
+- `reverse-proxy` が `backend-api` へ転送する
+- `backend-api` が `PostgreSQL` / `Redis` の接続状態を返す
 - `GET /health`
-  - reverse proxy 自体の簡易ヘルスチェック
-- `GET /api/...`
-  - `backend-api:8080` に転送
-- `GET /`
-  - ベース構成が生きていることを返す固定レスポンス
-
-## WAF の役割
-
-`waf/conf.d/default.conf` では次を設定しています。
-
-- `GET /health`
-  - WAF 自体の簡易ヘルスチェック
-- 許可メソッド制限
-  - `GET`, `HEAD`, `POST` 以外は `405`
-- 簡易遮断
-  - スキャン系 User-Agent
-  - path traversal を疑うパス
-  - 明らかな SQLi/XSS を疑う query string
-- 正常系
-  - `reverse-proxy` に転送
-
-## backend の役割
-
-`backend/server.js` は学習用の最小 API です。
-
-- `GET /health`
-  - backend 自体の生存確認
+  - WAF レイヤーの生存確認
+- `GET /api/health`
+  - WAF / reverse proxy / backend を通した集約ヘルスチェック
 - `GET /api/info`
-  - backend が内部ネットワーク越しに呼ばれていることの確認
-- アクセスログを `LOG_DIR/access.log` に保存
+  - 現在の構成情報を返す
 
-本実装ではここを Express / Fastify / NestJS などに差し替える想定です。
+### Step 2: External Firewall を入れる
 
-## 起動手順
+目的:
 
-1. Linux VM に Docker Engine と Docker Compose plugin を入れる
-2. `infra/` に移動する
-3. 必要なら `.env.example` をコピーして環境変数を整理する
-4. `docker compose up -d`
-5. 動作確認する
+- `waf` より前段に、外周の L4 境界を置く
+- 送信元 `Any` のまま、宛先を `80/443` に限定する
 
-確認例:
+追加要素:
 
-```bash
-curl http://localhost/health
-curl http://localhost/api/info
-curl -A "sqlmap" http://localhost/
-docker network ls
-docker network inspect public_net
-docker network inspect edge_net
-docker network inspect app_net
-docker network inspect db_net
-docker compose ps
-```
+- `external-firewall`
 
-## まだ未実装のもの
+確認したいこと:
 
-- 実際の認証、認可、注文、商品、カート API
-- DB schema, migration, seed
-- `ModSecurity + OWASP CRS` への WAF 強化
-- `Suricata` や同等製品の実導入
-- `Wazuh agent` などの HIDS 実導入
-- TLS 証明書の管理
+- Mac からは `80/443` に到達できる
+- `80/443` 以外は FW1 のポリシーで拒否される
+- `external-firewall` と `waf` の責務差を説明できる
 
-## 次に進める順番
+### Step 3: ホスト境界の防御を入れる
 
-1. `host-firewall/apply-firewall.sh` を実 VM に適用する
-2. `waf` を `ModSecurity + OWASP CRS` ベースへ強化する
-3. backend を本実装に差し替える
-4. PostgreSQL schema と migration を用意する
-5. `Suricata` や `Wazuh` をホスト側に導入する
-6. SQLi, XSS, IDOR, 不要ポート到達性の検証を行う
+目的:
+
+- コンテナ到達前に、Linux VM ホストで不要ポートを落とす
+
+追加要素:
+
+- `host-firewall`
+
+確認したいこと:
+
+- 公開対象ポートだけを許可できる
+- 非公開ポートへは到達できない
+- Docker の公開設定と host firewall の責務差を説明できる
+
+### Step 4: WAF レイヤーを強化する
+
+目的:
+
+- L7 での簡易防御を強化する
+
+追加・改善候補:
+
+- メソッド制限
+- 不正パス拒否
+- 危険な User-Agent の拒否
+- 将来的な ModSecurity / CRS 導入
+
+確認したいこと:
+
+- 明らかな不正リクエストが WAF で止まる
+- 正常トラフィックは `reverse-proxy` に流れる
+
+### Step 5: ネットワーク監視レイヤーを加える
+
+目的:
+
+- 通信を通す / 落とすだけでなく、観測できる状態を作る
+
+追加候補:
+
+- `NIDS`
+- `NIPS`
+
+確認したいこと:
+
+- 監視対象区間をどこに置くか説明できる
+- 通信の本線と監視の責務を分離できる
+
+### Step 6: ホスト監視を加える
+
+目的:
+
+- アプリや通信だけでなく、ホスト自体の異常兆候を見られるようにする
+
+追加候補:
+
+- `HIDS/HIPS`
+- ログ集約
+- アラート設計
+
+確認したいこと:
+
+- ファイル変更、認証イベント、異常プロセスなどを監視対象として整理できる
+
+### Step 7: 理想構成との差分を埋める
+
+目的:
+
+- 現在の実装を、冒頭の理想構成へ近づける
+
+検討項目:
+
+- `API Gateway` を独立させるか
+- `External Firewall` をどのレイヤーで表現するか
+- `NIPS` を実装に含めるか、論理構成としてのみ扱うか
+- TLS 終端位置を WAF に置くか別レイヤーに分けるか
+
+## ディレクトリ対応
+
+- [external-firewall](/home/buchi/infra/external-firewall)
+  - `waf` の前段に置く TCP firewall
+- [waf](/home/buchi/infra/waf)
+  - 外部公開の入口
+- [nginx](/home/buchi/infra/nginx)
+  - reverse proxy 設定
+- [backend](/home/buchi/infra/backend)
+  - backend API
+  - `GET /health`, `GET /api/health`, `GET /api/info`
+- [host-firewall](/home/buchi/infra/host-firewall)
+  - ホストファイアウォール実装
+- [nids-hids](/home/buchi/infra/nids-hids)
+  - NIDS/HIDS の構成メモ
+- [logs](/home/buchi/infra/logs)
+  - 各レイヤーのログ保存先
+
+## README を今後更新する観点
+
+この README は、単なるセットアップ手順ではなく、構成の説明責任を持つ文書として更新していく前提です。  
+更新時は次の観点を崩さない方が整理しやすくなります。
+
+- 理想構成と現状構成を混ぜない
+- 実装済みの要素と構想段階の要素を分ける
+- 各ステップで「何を追加したか」と「何が確認できるようになったか」を残す
+- 個別実装の詳細は各ディレクトリ配下の README に逃がし、ルート README は入口に徹する

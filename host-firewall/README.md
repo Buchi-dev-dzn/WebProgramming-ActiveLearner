@@ -91,18 +91,33 @@ CLI は操作だけを受けます。
 
 ## 実行例
 
+## 前提条件
+
+- `cargo` は `/home/buchi/.cargo/bin/cargo` に入っている前提
+- `sudo` の `PATH` に `~/.cargo/bin` が入っていない環境では、`sudo cargo ...` は失敗する
+- その場合は `sudo /home/buchi/.cargo/bin/cargo ...` のようにフルパスで実行する
+
+確認例:
+
+```bash
+command -v cargo
+sudo /home/buchi/.cargo/bin/cargo --version
+```
+
+## 実行例
+
 ### nftables dry-run
 
 ```bash
 cd /home/buchi/infra/host-firewall
-cargo run -- --backend nft --allowed-tcp-ports 22,80,443
+cargo run -- --backend nft
 ```
 
 ### nftables apply
 
 ```bash
 cd /home/buchi/infra/host-firewall
-sudo cargo run -- --backend nft --apply
+sudo /home/buchi/.cargo/bin/cargo run -- --backend nft --apply
 sudo nft list table inet codex_host_filter
 ```
 
@@ -125,7 +140,7 @@ cargo run -- --backend xdp
 
 ```bash
 cd /home/buchi/infra/host-firewall
-sudo cargo run -- --backend xdp --apply
+sudo /home/buchi/.cargo/bin/cargo run -- --backend xdp --apply
 ip link show dev eth0
 ```
 
@@ -133,7 +148,71 @@ ip link show dev eth0
 
 ```bash
 cd /home/buchi/infra/host-firewall
-sudo cargo run -- --backend xdp --apply --detach
+sudo /home/buchi/.cargo/bin/cargo run -- --backend xdp --apply --detach
+```
+
+## まず `nft` を付ける手順
+
+最初の確認は `xdp` ではなく `nft` だけで進める方が分かりやすいです。
+
+1. baseline を取る
+
+```bash
+sudo nft delete table inet codex_host_filter
+sudo nft list tables
+```
+
+`codex_host_filter` が無ければ、`No such file or directory` でも問題ありません。
+
+2. ルール生成を dry-run で確認する
+
+```bash
+cd /home/buchi/infra/host-firewall
+cargo run -- --backend nft
+```
+
+3. 実際に適用する
+
+```bash
+cd /home/buchi/infra/host-firewall
+sudo /home/buchi/.cargo/bin/cargo run -- --backend nft --apply
+```
+
+4. table が入ったことを確認する
+
+```bash
+sudo nft list table inet codex_host_filter
+```
+
+確認したい要点:
+
+- `policy drop`
+- `iif "lo" accept`
+- `ct state established,related accept`
+- `tcp dport { 22, 80, 443 } accept`
+
+5. 別マシンから差分を見る
+
+```bash
+nc -vz 192.168.64.4 22
+nc -vz 192.168.64.4 80
+nc -vz 192.168.64.4 443
+nc -vz -w 3 192.168.64.4 3001
+```
+
+見方:
+
+- 接続成功: 許可され、待受もある
+- `Connection refused`: ホストには届いたが、そのポートで待受がない
+- `timeout`: firewall などで drop されている可能性が高い
+
+`host-firewall` の確認で重要なのは、非許可ポートが `refused` から `timeout` に変わることです。
+
+6. 片付ける
+
+```bash
+sudo nft delete table inet codex_host_filter
+sudo nft list tables
 ```
 
 ## 疎通確認
@@ -159,6 +238,18 @@ nc -vz -w 3 192.168.64.4 3001
 - 接続成功: 許可され、待受もある
 - `Connection refused`: ホストには届いたが待受がない
 - timeout: firewall などで落ちている可能性が高い
+
+## よくある詰まりどころ
+
+- `sudo: cargo: command not found`
+  - `sudo` 配下の `PATH` に `~/.cargo/bin` が無い
+  - `sudo /home/buchi/.cargo/bin/cargo run -- --backend nft --apply` を使う
+- `sudo nft delete table inet codex_host_filter` で `No such file or directory`
+  - その table が今は存在しないだけ
+  - すでに無効化済み、または未適用
+- `nc` で `Connection refused`
+  - firewall で落ちたのではなく、相手ホストに届いたうえで待受が無い
+  - firewall の効果確認には、非許可ポートが `timeout` になるかを見る
 
 ## 注意
 
