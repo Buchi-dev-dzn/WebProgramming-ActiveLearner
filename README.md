@@ -1,35 +1,22 @@
 # Security EC Base
 
-このリポジトリは、EC 系サービスを想定した多層防御インフラの検証用ベース構成です。  
-Docker Compose を使って、外部公開レイヤー、リバースプロキシ、バックエンド、データストアを段階的に組み立てる前提で整理しています。
+このリポジトリは、EC 系サービスを想定した三層構成インフラの検証用ベースです。  
+Docker Compose を使って、公開用の DMZ、非公開の Application 層、Database 層を分離して確認できるようにしています。
 
-現時点では、Step 1 の最小疎通構成を実装済みとしつつ、最終的に目指す理想構成とのあいだに差があります。  
-この README ではその差を明示しながら、全体像と今後の進め方を一つの入口にまとめます。
+## 目的
 
-## 基本情報
+- DMZ / Application / Database の責務分離を確認する
+- reverse proxy と internal firewall の役割差を整理する
+- 「どこまでを外に見せて、どこからを閉じるか」を説明できる構成にする
 
-- 目的
-  - 多層防御を前提にしたインフラ構成を段階的に検証する
-  - WAF、リバースプロキシ、ホストファイアウォール、監視系の責務分離を整理する
-  - 最終的に「どこで何を防ぐか」を説明できる構成にする
-- 主な実装技術
-  - Docker Compose
-  - Nginx
-  - Node.js
-  - PostgreSQL
-  - Redis
-- 現在このリポジトリに存在する主要要素
-  - `external-firewall`
-  - `waf`
-  - `nginx` (`reverse-proxy` 用設定)
-  - `backend`
-  - `nids-hids`
-  - `logs`
+## 使用技術
 
-## 理想とする全体像
+- Docker Compose
+- Nginx
+- Node.js
+- PostgreSQL
 
-以下は、このリポジトリで最終的に説明対象としたい論理構成です。  
-これは「現時点で完全に実装済みの構成」ではなく、「目指す全体像」です。
+## 最終的に目指す構成
 
 ```mermaid
 graph TD
@@ -63,255 +50,249 @@ subgraph Linux_VM[Linux VM]
   HIDS[HIDS/HIPS] -.host monitor.-> Back
 end
 ```
-```mermaid
-flowchart LR
-    Client[Client<br/>Frontend]
 
-    subgraph VM[VM]
-        direction LR
+## この構成をどう読むか
 
-        FW[External Firewall<br/>L3 / L4<br/>nftables / Nginx]
-        IPS[IPS]
-        WAF[WAF]
+この図は、Docker コンテナの並びそのものではなく、本来は別サーバーまたは別ネットワークに分離されるべき防御層と業務層の責務を表しています。
 
-        subgraph Backend[Backend]
-            direction LR
+今回の前提は次の通りです。
 
-            subgraph DMZ[DMZ / Docker 1]
-                RP[Reverse Proxy<br/>Nginx]
-            end
+- 本来は `DMZ`, `Application`, `Database` は別サーバーで構築する
+- ただし、物理的に複数サーバーを用意しづらいため、1 台の VM 上で Docker を使って擬似的に分離する
+- したがって Docker は本番代替ではなく、サーバー分離と安全な通信経路を学習・検証するための再現手段として使う
 
-            subgraph APP[Application / Docker 2]
-                IFW[Internal Firewall<br/>nftables / Nginx]
-                API[API]
-                FastAPI[Backend Application<br/>Python / FastAPI]
-            end
+言い換えると、今回 Docker で再現したいのは「コンテナ化」そのものではなく、次のような設計上の意味です。
 
-            subgraph DBLayer[Database / Docker 3]
-                DB[(DB)]
-            end
-        end
-    end
+- 外部から直接触れてよい層はどこか
+- どの層からどの層へ通信してよいか
+- どこで通信を中継し、どこで検査し、どこで監視するか
 
-    Client -->|443 / 80| FW
-    FW --> IPS
-    IPS --> WAF
-    WAF --> RP
-    RP --> IFW
-    IFW --> API
-    API --> FastAPI
-    FastAPI --> DB
-```
+## 各要素の意味
 
-### この図が示していること
+- `Client`
+  - 利用者やフロントエンド相当
+  - システム外部からアクセスしてくる主体
+- `FW1 / External Firewall`
+  - 最初の外周境界
+  - `80/443` など必要最小限の到達性だけを許可する層
+  - 本来はクラウド firewall、セキュリティグループ、NW 機器、host firewall などが担う
+- `NIPS`
+  - 通信を検査し、不正トラフィックを遮断できる侵入防止層
+  - 単なる観測ではなく、通信本線上で止める役割を持つ
+- `WAF`
+  - HTTP/HTTPS のようなアプリケーション層通信を検査する
+  - SQLi, XSS, 不審なパス、危険な User-Agent などを早い段階で落とす
+  - クラウド型でも reverse proxy 型でもよい
+- `RP / Reverse Proxy`
+  - Linux VM 内の DMZ に置く公開用サーバ
+  - 外部から来た正当なリクエストを内部層へ中継する
+  - TLS 終端、ルーティング、ヘッダ付与、負荷分散の入口になりやすい
+- `FW2 / Internal Firewall`
+  - DMZ と Application Zone の境界
+  - Reverse Proxy を通過したあとでも、内部アプリへ行ける通信をさらに限定する
+  - 「外に見せる層」と「業務処理を持つ層」を分離するための重要な境界
+- `API Gateway`
+  - API 群の入口
+  - 認証認可、レート制限、API 単位のルーティング、バージョン管理などを担う候補
+  - Backend 本体と責務を分けるために独立させる価値がある
+- `Back / Backend Application Server`
+  - 実際の業務ロジックを持つアプリケーション本体
+  - 外部から直接触れさせず、内部経路だけで到達させる
+- `DB / Database`
+  - 永続データを保持する最深部
+  - 原則として backend からのみ接続される
+- `NIDS`
+  - 通信を監視する IDS
+  - 本線上で転送を担うのではなく、横から観測して異常を検知する
+- `HIDS / HIPS`
+  - ホストやアプリサーバー内部の監視・保護
+  - ファイル改ざん、異常プロセス、認証イベントなどを見る
 
-- 外部から内部までを 1 台のサーバや 1 個のコンテナで受けるのではなく、役割ごとに層を分ける
-- 防御ポイントを HTTP レイヤーだけでなく、L3/L4、ネットワーク監視、ホスト監視まで分散させる
-- 通信の本線に入る要素と、監視として横から見る要素を分けて整理する
+## なぜこの順番なのか
+
+この構成は、外側から内側へ進むほど信頼度を上げ、到達可能性を絞っていく考え方です。
+
+1. `FW1`
+   - まず不要なポートや到達性を絞る
+2. `NIPS`
+   - 本線上で不正通信を落とす
+3. `WAF`
+   - HTTP/HTTPS レベルの不正を落とす
+4. `Reverse Proxy`
+   - 公開サーバとして内部への正規入口になる
+5. `FW2`
+   - DMZ と内部アプリ層を切り分ける
+6. `API Gateway / Backend`
+   - 業務処理を行う
+7. `Database`
+   - 最も守るべきデータを保持する
+
+この流れにより、ある 1 層が破られても、次の層で追加の制限や検査がかかる多層防御になります。
+
+## Docker 上での対応づけ
+
+今回の Docker 構成は、この最終図をそのまま完全再現するものではなく、段階的に近づけるためのものです。
+
+現時点での主な対応は次の通りです。
+
+- `reverse-proxy` コンテナ
+  - `RP / Reverse Proxy`
+  - DMZ の公開サーバを擬似的に再現
+- `application` コンテナ
+  - `FW2 + API + Backend` の一部または全体を段階的に再現する層
+  - 現時点では内部 nginx を `FW2` 相当として使い、その後段で backend を動かしている
+- `postgres` コンテナ
+  - `DB / Database`
+  - データ層を擬似的に分離
+
+まだ独立していない要素は、今後必要に応じて分離します。
+
+- `FW1`
+  - Docker の外側にある host / cloud firewall として設計する方が自然
+- `NIPS`
+  - Docker の直列サービスというより、VM やネットワーク境界で考える方が自然
+- `WAF`
+  - reverse proxy 前段または同層で再導入可能
+- `API Gateway`
+  - backend から独立させる候補
+- `NIDS`, `HIDS/HIPS`
+  - 通信本線ではなく監視レイヤーとして追加する候補
+
+## 報告書で説明すべき要点
+
+- Docker を使う理由は、単一 VM 上で複数サーバー構成を擬似再現するためである
+- 再現したい本質はコンテナ技術ではなく、信頼境界、公開範囲、通信経路、責務分離である
+- 図にある各要素は、単なるソフトウェア名ではなく「どこで何を防ぐか」を示す防御ポイントである
+- 特に `DMZ`, `Application Zone`, `Data Zone` を分けることで、侵入されても横移動しにくい構成を目指している
+- `NIDS` と `HIDS/HIPS` は通信本線ではなく監視・検知の層として整理する
+
+### 各層の役割
+
+- `external-firewall`
+  - ホストに `80/443` を公開する唯一の入口
+  - 外周の L4 gateway として `reverse-proxy` にだけ TCP を流す
+- `reverse-proxy`
+  - DMZ を模した公開サーバ
+  - `external-firewall` の後段で受ける
+  - `application` コンテナにだけ中継する
+- `application`
+  - 外部公開しない内部アプリ層
+  - コンテナ内 nginx が Internal Firewall として動く
+  - `/api/` だけを backend API に流す
+- `postgres`
+  - データ保存先
+  - `application` からだけ参照される前提
 
 ## 現在の実装範囲
 
-現時点でこのリポジトリにある実装は、理想構成の一部です。
+- `external-firewall/`
+  - host で `80/443` を受ける唯一の入口
+  - `nginx stream` により `reverse-proxy` に TCP 転送する
+  - host 側では必要に応じて `nftables` による packet filtering を補助適用できる
+- `nginx/`
+  - DMZ に置く reverse proxy の設定
+- `application/`
+  - Internal Firewall 相当の nginx と起動設定
+- `backend/`
+  - Node.js の最小 API
+- `logs/`
+  - external firewall / reverse proxy / application / postgres のログ保存先
 
-- `waf`
-  - `external-firewall` 後段の HTTP/HTTPS ガード
-  - Nginx ベースの簡易ガード
-  - 自己署名 TLS により `443` を終端する
-- `external-firewall`
-  - 外部公開の入口
-  - `waf` より前段の TCP 境界
-  - 送信元は `Any`、宛先は `80/443` のみを `waf` に通す
-  - 必要なら `nftables` により host のカーネル層でも同じポリシーを適用できる
-- `reverse-proxy`
-  - `nginx/` 配下の設定で backend へ中継
-- `backend-api`
-  - `backend/server.js` の最小 Node.js API
-  - `PostgreSQL` / `Redis` の状態を返すヘルスチェック付き
-- `postgres`
-  - 永続データ保存先
-- `redis`
-  - 補助データストア
+## 現在再現している段階
 
-未実装または構想段階の要素:
+最終構成のすべてがまだ入っているわけではありません。  
+現時点で Docker 上に再現している本線は次の通りです。
 
-- クラウド上の `External Firewall`
-  - 現在は Docker 上の `external-firewall` で代替
-  - 本来のクラウド外周、NW 機器、または上位ファイアウォール相当
-- `NIPS`
-  - 通信を遮断可能な侵入防止レイヤー
+```text
+Client
+  -> External Firewall
+  -> Reverse Proxy
+  -> Internal Firewall
+  -> Backend
+  -> Database
+```
+
+つまり、最終図のうち現在主に再現できているのは次の要素です。
+
+- `FW1 / External Firewall`
+- `RP / Reverse Proxy`
 - `FW2 / Internal Firewall`
-  - 理想構成では reverse proxy 後段の内部境界
-  - 現時点では未実装
+- `Back / Backend Application Server`
+- `DB / Database`
+
+## External Firewall の実装方針
+
+今回の `External Firewall` は、純粋に 1 つの packet filtering 機構だけで作っているわけではありません。  
+次の 2 層で実装しています。
+
+- Docker 上の主実装
+  - `external-firewall` コンテナが `80/443` だけを受ける
+  - `nginx stream` で `reverse-proxy` に TCP 転送する
+- host 側の補助実装
+  - `nftables` で host の `input` chain に許可ポートを入れる
+
+つまり今回の段階では、External Firewall は「L4 gateway による入口分離」と「必要に応じた packet filtering 補助」の組み合わせとして実装しています。
+
+今後追加する対象は次の通りです。
+
+- `NIPS`
+- `WAF`
 - `API Gateway`
-  - 現時点では専用コンポーネントなし
 - `NIDS`
-  - 監視用途の IDS は構成メモ段階
 - `HIDS/HIPS`
-  - ホスト監視は構成メモ段階
 
-## ステップごとの進め方
+## 旧構成の扱い
 
-このリポジトリは、最初から理想形を一気に作るより、段階ごとに責務を足していく方が整理しやすいです。  
-以下は、README 上でも追跡しやすい推奨ステップです。
+以下は現行 Compose の直列構成には入っていません。
 
-### Step 1: 最小疎通構成を作る
+- `waf/`
+  - 旧構成で使っていた簡易 WAF 設定
+  - 現在は `reverse-proxy` の TLS 証明書置き場も兼用
+- `nids-hids/`
+  - 監視系の構成メモ
 
-目的:
+## 起動
 
-- まず通信の本線だけを成立させる
-- 各レイヤーの役割を最小限で確認する
+```bash
+docker compose up -d --build
+```
 
-構成:
+## 確認ポイント
 
-- `external-firewall`
-- `waf`
-- `reverse-proxy`
-- `backend-api`
-- `postgres`
-- `redis`
-
-実装したこと:
-
-- `external-firewall` が `80/443` を受ける
-- `external-firewall` が送信元 `Any` で `80/443` だけを `waf` に転送する
-- 必要なら `external-firewall/apply-nft.sh` で、host の `input` chain でも `80/443` 以外を落とせる
-- `waf` が HTTP/HTTPS を検査する
-- `reverse-proxy` が `backend-api` へ転送する
-- `backend-api` が `PostgreSQL` / `Redis` の接続状態を返す
 - `GET /health`
-  - WAF レイヤーの生存確認
+  - reverse proxy の生存確認
 - `GET /api/health`
-  - WAF / reverse proxy / backend を通した集約ヘルスチェック
+  - reverse proxy -> application -> backend -> postgres の疎通確認
 - `GET /api/info`
   - 現在の構成情報を返す
 
-現時点の結果:
+```bash
+curl -i http://127.0.0.1/health
+curl -i http://127.0.0.1/api/health
+curl -i http://127.0.0.1/api/info
+curl -k -i https://127.0.0.1/api/health
+```
 
-- FW1 は `nginx stream` によるユーザ空間の L4 境界として動作する
-- あわせて `nftables` を使った FW1 kernel policy 用スクリプトを追加した
-- ただし、`nftables` の host 実適用と外部クライアントからの再確認は未実施
+`External Firewall` の起動・停止・`nftables` 適用・比較検証の詳細は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) にまとめています。
 
-### Step 2: External Firewall を入れる
+現時点での検証結果としては、次を確認しています。
 
-目的:
+- `external-firewall` 停止時は外部疎通が失われる
+- `external-firewall` 復旧後は `80/443` と HTTP/HTTPS 疎通が回復する
+- `nftables` 適用後も `80/443` の正常疎通は維持される
+- 一方、`input chain` だけでは Docker 公開ポート経路に対する遮断効果を明確には観測できなかった
 
-- `waf` より前段に、外周の L4 境界を置く
-- 送信元 `Any` のまま、宛先を `80/443` に限定する
+詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) の「ここまでの検証結果まとめ」を参照してください。
 
-追加要素:
+## 設計上の意図
 
-- `external-firewall`
+- 公開ポートは `external-firewall` だけに寄せる
+- `reverse-proxy` は DMZ の内部サーバとして外周入口の後段に置く
+- `application` と `postgres` は internal network に閉じる
+- Docker 上で外周サーバー、DMZ、内部アプリ層、DB 層を段階的に分離する
 
-確認したいこと:
+## 今後の拡張候補
 
-- Mac からは `80/443` に到達できる
-- `80/443` 以外は FW1 のポリシーで拒否される
-- `nftables` を併用した場合は、L3/L4 段階で `waf` に届く前に落とせる
-- `external-firewall` と `waf` の責務差を説明できる
-
-### Step 3: WAF レイヤーを強化する
-
-目的:
-
-- L7 での簡易防御を強化する
-
-追加・改善候補:
-
-- メソッド制限
-- 不正パス拒否
-- 危険な User-Agent の拒否
-- 将来的な ModSecurity / CRS 導入
-
-確認したいこと:
-
-- 明らかな不正リクエストが WAF で止まる
-- 正常トラフィックは `reverse-proxy` に流れる
-
-### Step 4: Internal Firewall を入れる
-
-目的:
-
-- reverse proxy 後段に内部境界を置く
-- backend / API Gateway 側へ流す通信をさらに絞る
-
-追加候補:
-
-- `FW2`
-- 宛先ポートや経路を限定する内部ポリシー
-
-確認したいこと:
-
-- `FW1` と `FW2` の責務差を説明できる
-- backend 側に流れる通信の境界を明示できる
-
-### Step 5: ネットワーク監視レイヤーを加える
-
-目的:
-
-- 通信を通す / 落とすだけでなく、観測できる状態を作る
-
-追加候補:
-
-- `NIDS`
-- `NIPS`
-
-確認したいこと:
-
-- 監視対象区間をどこに置くか説明できる
-- 通信の本線と監視の責務を分離できる
-
-### Step 6: ホスト監視を加える
-
-目的:
-
-- アプリや通信だけでなく、ホスト自体の異常兆候を見られるようにする
-
-追加候補:
-
-- `HIDS/HIPS`
-- ログ集約
-- アラート設計
-
-確認したいこと:
-
-- ファイル変更、認証イベント、異常プロセスなどを監視対象として整理できる
-
-### Step 7: 理想構成との差分を埋める
-
-目的:
-
-- 現在の実装を、冒頭の理想構成へ近づける
-
-検討項目:
-
-- `FW2` をどの実装方式で置くか
-- `API Gateway` を独立させるか
-- `NIPS` を実装に含めるか、論理構成としてのみ扱うか
-- TLS 終端位置を WAF に置くか別レイヤーに分けるか
-
-## ディレクトリ対応
-
-- [external-firewall](/home/buchi/infra/external-firewall)
-  - `waf` の前段に置く TCP firewall
-  - `nftables` を使った FW1 kernel policy もここに置く
-- [waf](/home/buchi/infra/waf)
-  - 外部公開の入口
-- [nginx](/home/buchi/infra/nginx)
-  - reverse proxy 設定
-- [backend](/home/buchi/infra/backend)
-  - backend API
-  - `GET /health`, `GET /api/health`, `GET /api/info`
-- [nids-hids](/home/buchi/infra/nids-hids)
-  - NIDS/HIDS の構成メモ
-- [logs](/home/buchi/infra/logs)
-  - 各レイヤーのログ保存先
-
-## README を今後更新する観点
-
-この README は、単なるセットアップ手順ではなく、構成の説明責任を持つ文書として更新していく前提です。  
-更新時は次の観点を崩さない方が整理しやすくなります。
-
-- 理想構成と現状構成を混ぜない
-- 実装済みの要素と構想段階の要素を分ける
-- 各ステップで「何を追加したか」と「何が確認できるようになったか」を残す
-- 個別実装の詳細は各ディレクトリ配下の README に逃がし、ルート README は入口に徹する
+- WAF を `external-firewall` と `reverse-proxy` の間または前後に再導入する
+- host / cloud 側の本来の External Firewall を別レイヤーとして補完する
+- NIDS / HIDS を監視系として追加する

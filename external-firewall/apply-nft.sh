@@ -2,10 +2,13 @@
 set -euo pipefail
 
 table_name="${FW1_TABLE_NAME:-codex_external_fw1}"
-allowed_tcp_ports="${FW1_ALLOWED_TCP_PORTS:-80,443,22}"
+allowed_tcp_ports="${FW1_ALLOWED_TCP_PORTS:-22,80,443}"
 
 sudo nft delete table inet "$table_name" >/dev/null 2>&1 || true
 
+# This script only controls the host input chain.
+# It is useful for host-bound traffic checks, but it is not a complete
+# guard for every Docker published-port path.
 sudo nft -f - <<EOF
 table inet $table_name {
   chain input {

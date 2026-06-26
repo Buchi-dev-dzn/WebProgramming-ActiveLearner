@@ -1,12 +1,12 @@
 # Nginx Reverse Proxy
 
-このディレクトリには、Linux VM 側の外部入口となる nginx 設定を置いています。
+このディレクトリには、DMZ に置く `reverse-proxy` コンテナの nginx 設定を置いています。
 
 ## 目的
 
-- WAF の後段で受けた HTTP リクエストを backend へ振り分ける
-- `/api/...` を backend に転送する
-- 後から WAF や TLS 設定を差し込みやすくする
+- 公開用の入口として HTTP/HTTPS を受ける
+- `/api/...` を `application` コンテナへ転送する
+- DMZ と内部アプリ層の境界を分けやすくする
 
 ## ファイル
 
@@ -19,13 +19,13 @@
 
 ## 現状
 
-- 外部公開はしていない
-- `waf` からの内部通信を受ける
-- `443` は WAF 側で公開しているが、まだ TLS 設定は未投入
+- `external-firewall` から渡された `80/443` を受ける
+- host には直接公開しない
+- `application` コンテナだけに中継する
+- 自己署名証明書で `443` を終端する
 
 ## 次の拡張
 
-- TLS 証明書設定
-- ModSecurity + OWASP CRS
+- WAF の再導入
 - rate limit
-- security header
+- upstream の多重化

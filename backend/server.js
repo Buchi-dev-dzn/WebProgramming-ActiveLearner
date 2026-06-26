@@ -2,25 +2,15 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
-const { createClient } = require("redis");
 
 const port = Number(process.env.PORT || 8080);
 const logDir = process.env.LOG_DIR || "/tmp";
 const logFile = path.join(logDir, "access.log");
 const databaseUrl = process.env.DATABASE_URL;
-const redisUrl = process.env.REDIS_URL;
 
 const postgresPool = databaseUrl
   ? new Pool({ connectionString: databaseUrl })
   : null;
-const redisClient = redisUrl ? createClient({ url: redisUrl }) : null;
-let redisConnectPromise = null;
-
-if (redisClient) {
-  redisClient.on("error", (error) => {
-    console.error("redis client error", error.message);
-  });
-}
 
 function writeLog(entry) {
   try {
@@ -31,29 +21,9 @@ function writeLog(entry) {
   }
 }
 
-async function ensureRedisConnected() {
-  if (!redisClient) {
-    return;
-  }
-
-  if (redisClient.isOpen) {
-    return;
-  }
-
-  if (!redisConnectPromise) {
-    redisConnectPromise = redisClient.connect().catch((error) => {
-      redisConnectPromise = null;
-      throw error;
-    });
-  }
-
-  await redisConnectPromise;
-}
-
 async function runHealthChecks() {
   const checks = {
     postgres: { status: "not_configured" },
-    redis: { status: "not_configured" },
   };
 
   let overallStatus = "ok";
@@ -65,17 +35,6 @@ async function runHealthChecks() {
     } catch (error) {
       overallStatus = "degraded";
       checks.postgres = { status: "error", detail: error.message };
-    }
-  }
-
-  if (redisClient) {
-    try {
-      await ensureRedisConnected();
-      await redisClient.ping();
-      checks.redis = { status: "ok" };
-    } catch (error) {
-      overallStatus = "degraded";
-      checks.redis = { status: "error", detail: error.message };
     }
   }
 
@@ -113,11 +72,11 @@ async function handleRequest(req, res) {
 
   if (req.url === "/api/info") {
     writeJson(res, 200, {
-      name: "security-ec-base",
-      message: "backend reachable only through the reverse proxy",
-      via: ["waf", "reverse-proxy", "backend-api"],
-      dependencies: ["postgres", "redis"],
-      networks: ["app_net", "db_net", "monitor_net"],
+      name: "security-ec-3tier",
+      message: "backend reachable only through the reverse proxy and application internal firewall",
+      via: ["reverse-proxy", "application", "backend-api"],
+      dependencies: ["postgres"],
+      networks: ["app_net", "db_net"],
     });
     return;
   }

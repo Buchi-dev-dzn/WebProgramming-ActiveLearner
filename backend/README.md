@@ -1,19 +1,19 @@
 # Backend
 
-このディレクトリには、Step 1 の疎通確認用 backend 実装を置いています。
+このディレクトリには、Application 層コンテナ内で動く疎通確認用 backend 実装を置いています。
 
 ## 目的
 
-- reverse proxy から backend へ流せることを確認する
+- reverse proxy と internal firewall を通して backend へ流せることを確認する
 - backend を外部公開せず、内部ネットワークでのみ到達させる
-- PostgreSQL / Redis への接続状態を API から確認できるようにする
+- PostgreSQL への接続状態を API から確認できるようにする
 - ログ出力先の形を先に決める
 
 ## ファイル
 
 - `server.js`
   - Node.js 標準 `http` モジュールを使った最小 API
-  - `pg` と `redis` を使った依存先ヘルスチェックを含む
+  - `pg` を使った依存先ヘルスチェックを含む
 - `package.json`
   - backend の依存定義
 - `Dockerfile`
@@ -23,7 +23,7 @@
 
 - `GET /health`
   - backend 直通のヘルスチェック
-  - PostgreSQL / Redis の状態を JSON で返す
+  - PostgreSQL の状態を JSON で返す
 - `GET /api/health`
   - reverse proxy / WAF 経由で到達確認しやすい集約ヘルスチェック
 - `GET /api/info`
