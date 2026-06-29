@@ -50,3 +50,82 @@
 - `NIPS` のレート試験は短時間に多数のリクエストを送るため、VM が高負荷なタイミングでは結果がぶれることがある
 - `WAF` の `403` と `405` は `WAF` 有効時を前提にしている
 - `pass-through` 構成で比較したい場合は、各 README にある無効化・比較手順を使う
+
+## 比較メモ用テーブル
+
+この節は、`有効時`, `停止時`, `pass-through 時` の結果を横並びで記録するためのメモ欄です。  
+報告書では、この表を埋めると「その層があるとき / ないとき / 検査だけ外したとき」の差を説明しやすくなります。
+
+### External Firewall
+
+| 項目 | 有効時 | 停止時 | メモ |
+| --- | --- | --- | --- |
+| `80/tcp` |  |  |  |
+| `443/tcp` |  |  |  |
+| `22/tcp` |  |  |  |
+| `8080/tcp` |  |  |  |
+| `5432/tcp` |  |  |  |
+| 外部入口としての意味 | `80/443` が唯一の入口 | 入口自体が失われる |  |
+
+推奨コマンド:
+
+```bash
+python3 other/test/external-firewall/portscan.py 192.168.64.4 --ports 22,80,443,8080,5432
+```
+
+### NIPS
+
+| 項目 | 通常 NIPS | pass-through NIPS | stopped NIPS | メモ |
+| --- | --- | --- | --- | --- |
+| `GET /health` |  |  |  |  |
+| `GET /api/health` over HTTPS |  |  |  |  |
+| burst 時の `200` 件数 |  |  |  |  |
+| burst 時の `429` 件数 |  |  |  |  |
+| NIPS が遮断したと言えるか |  |  |  |  |
+
+推奨コマンド:
+
+```bash
+python3 other/test/nips/check_nips.py 192.168.64.4
+```
+
+整理の観点:
+
+- `通常 NIPS`
+  - 正常通信は通る
+  - burst 時に `429` が出る
+- `pass-through NIPS`
+  - 正常通信は通る
+  - NIPS 自体では `429` が出なくなる
+- `stopped NIPS`
+  - 本線が切れ、正常通信も成立しない
+
+### WAF
+
+| 項目 | 通常 WAF | pass-through WAF | stopped WAF | メモ |
+| --- | --- | --- | --- | --- |
+| `GET /` |  |  |  |  |
+| `GET /api/health` over HTTPS |  |  |  |  |
+| `User-Agent: sqlmap` |  |  |  |  |
+| `?q=<script>` |  |  |  |  |
+| `?q=union select` |  |  |  |  |
+| `PUT /` |  |  |  |  |
+| WAF が遮断したと言えるか |  |  |  |  |
+
+推奨コマンド:
+
+```bash
+python3 other/test/waf/check_waf.py 192.168.64.4
+```
+
+整理の観点:
+
+- `通常 WAF`
+  - 正常通信は通る
+  - 危険 UA / 危険 query は `403`
+  - 非許可メソッドは `405`
+- `pass-through WAF`
+  - 正常通信は通る
+  - WAF 自体では `403/405` を返さなくなる
+- `stopped WAF`
+  - 本線が切れ、正常通信も成立しない
