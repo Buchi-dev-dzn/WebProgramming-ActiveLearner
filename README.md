@@ -141,6 +141,9 @@ end
 - `nips` コンテナ
   - `NIPS`
   - inline proxy として本線上で遮断を行う
+- `waf` コンテナ
+  - `WAF`
+  - TLS 終端と Web 向け詳細検査を行う
 - `reverse-proxy` コンテナ
   - `RP / Reverse Proxy`
   - DMZ の公開サーバを擬似的に再現
@@ -175,10 +178,13 @@ end
   - 外周の L4 gateway として `nips` にだけ TCP を流す
 - `nips`
   - `external-firewall` と `reverse-proxy` の間に置く inline NIPS
-  - source IP ごとの接続レート、TLS handshake、HTTP 攻撃シグネチャを見て遮断する
+  - source IP ごとの接続レートや TLS handshake 異常を見て広く遮断する
+- `waf`
+  - `nips` と `reverse-proxy` の間に置く Web Application Firewall
+  - HTTP メソッド、危険 UA、危険 path/query などを詳細に検査して止める
 - `reverse-proxy`
   - DMZ を模した公開サーバ
-  - `nips` の後段で受ける
+  - `waf` の後段で受ける
   - `application` コンテナにだけ中継する
 - `application`
   - 外部公開しない内部アプリ層
@@ -196,7 +202,10 @@ end
   - host 側では必要に応じて `nftables` による packet filtering を補助適用できる
 - `nips/`
   - inline NIPS の設定
-  - `HAProxy` により rate 制御、TLS handshake 検査、HTTP シグネチャ遮断を行う
+  - `HAProxy` により rate 制御と TLS handshake 検査を行う
+- `waf/`
+  - inline WAF の設定
+  - Web アプリケーション向けの HTTP/HTTPS 詳細検査を行う
 - `nginx/`
   - DMZ に置く reverse proxy の設定
 - `application/`
@@ -215,6 +224,7 @@ end
 Client
   -> External Firewall
   -> NIPS
+  -> WAF
   -> Reverse Proxy
   -> Internal Firewall
   -> Backend
@@ -225,6 +235,7 @@ Client
 
 - `FW1 / External Firewall`
 - `NIPS`
+- `WAF`
 - `RP / Reverse Proxy`
 - `FW2 / Internal Firewall`
 - `Back / Backend Application Server`
@@ -245,7 +256,6 @@ Client
 
 今後追加する対象は次の通りです。
 
-- `WAF`
 - `API Gateway`
 - `NIDS`
 - `HIDS/HIPS`
@@ -255,8 +265,8 @@ Client
 以下は現行 Compose の直列構成には入っていません。
 
 - `waf/`
-  - 旧構成で使っていた簡易 WAF 設定
-  - 現在は `reverse-proxy` の TLS 証明書置き場も兼用
+  - 現在の inline WAF 設定
+  - TLS 終端と Web 向け詳細検査を担う
 - `nips/`
   - NIPS の設定と設計メモ
   - L3 から L7 までを総合的に見て遮断する inline 層
@@ -294,9 +304,10 @@ curl -k -i https://127.0.0.1/api/health
 - `nftables` 適用後も `80/443` の正常疎通は維持される
 - 一方、`input chain` だけでは Docker 公開ポート経路に対する遮断効果を明確には観測できなかった
 - `nips` 追加後も正常な HTTP/HTTPS 疎通は維持された
-- `nips` は危険な User-Agent と XSS / SQLi 風の HTTP リクエストを `403` で遮断した
+- `waf` 追加後も正常な HTTP/HTTPS 疎通は維持された
+- `waf` は危険な User-Agent、XSS / SQLi 風 query、非許可メソッドを `403/405` で遮断した
 
-詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) と [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md:1) を参照してください。
+詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1), [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md:1), [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md:1) を参照してください。
 
 ## 設計上の意図
 

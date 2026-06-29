@@ -1,11 +1,11 @@
 # WAF Layer
 
-このディレクトリには、`external-firewall` の後段に置く `waf` コンテナの設定を置いています。
+このディレクトリには、`nips` の後段に置く `waf` コンテナの設定を置いています。
 
 ## 役割
 
-- `external-firewall` から渡された HTTP/HTTPS を受ける
-- 単純な不正リクエストやスキャンを早い段階で落とす
+- `nips` から渡された HTTP/HTTPS を受ける
+- Web アプリケーション向けのリクエストを詳細に検査する
 - 正常な通信だけを `reverse-proxy` に渡す
 
 ## 現在の内容
@@ -22,10 +22,214 @@
 
 ## Step 1 での HTTPS の扱い
 
-- `external-firewall` から受けた `80` と `443` を WAF で処理する
+- `nips` から受けた `80` と `443` を WAF で処理する
 - TLS 終端は WAF で行う
 - 証明書はローカル検証用の自己署名であり、本番用途ではない
 - `curl -k https://<host>/api/health` のように疎通確認する前提
+
+## 今回の構成での位置づけ
+
+今回の本線は次の通りです。
+
+```text
+Client
+  -> External Firewall
+  -> NIPS
+  -> WAF
+  -> Reverse Proxy
+  -> Internal Firewall
+  -> Backend
+```
+
+役割分担は次のように整理します。
+
+- `External Firewall`
+  - 到達ポートを限定し、公開入口を 1 か所に集約する
+- `NIPS`
+  - 本線上で rate 異常や TLS handshake 異常を見て広く止める
+- `WAF`
+  - HTTP/HTTPS を詳細に見て、Web 向け攻撃を止める
+
+## 今回の WAF が見るもの
+
+- 非許可 HTTP メソッド
+- 危険な User-Agent
+- path traversal や管理画面探索
+- SQLi / XSS を疑う query
+- 過大な request body
+
+## 実測で確認したいこと
+
+- 正常な `/health` と `/api/health` は通る
+- `sqlmap` などの明らかな危険 UA は `403`
+- `?q=<script>` や `?q=union%20select` は `403`
+- 非許可メソッドは `405`
+
+## 実測した検証結果
+
+今回の本線で次を確認しました。
+
+### 正常系
+
+- `https://127.0.0.1/api/health`
+  - `200 OK`
+- `http://127.0.0.1/`
+  - `200 OK`
+  - body は `reverse-proxy active`
+
+意味:
+
+- `External Firewall -> NIPS -> WAF -> Reverse Proxy -> Application -> Backend` の本線が成立している
+- WAF を挟んでも正常トラフィックは backend まで通る
+
+### 遮断系
+
+- `curl -A "sqlmap" http://127.0.0.1/`
+  - `403`
+- `curl "http://127.0.0.1/?q=<script>"`
+  - `403`
+- `curl "http://127.0.0.1/?q=union%20select"`
+  - `403`
+- `curl -X PUT http://127.0.0.1/`
+  - `405`
+
+意味:
+
+- 危険な User-Agent を WAF で止められた
+- XSS / SQLi を疑う query を WAF で止められた
+- 非許可メソッドを WAF で止められた
+
+### 今回の役割分担
+
+- `NIPS`
+  - 広く止める層
+  - rate 異常や TLS handshake 異常を見る
+- `WAF`
+  - Web に深く効く層
+  - HTTP/HTTPS の詳細検査を行う
+
+## 有効化・無効化と比較方法
+
+### 有効化
+
+`WAF` を有効にした状態で本線を起動する:
+
+```bash
+docker compose up -d waf nips external-firewall reverse-proxy
+```
+
+設定変更を反映して再作成する:
+
+```bash
+docker compose up -d --force-recreate waf nips external-firewall
+```
+
+状態確認:
+
+```bash
+docker compose ps waf nips external-firewall reverse-proxy
+docker compose logs --tail=50 waf
+```
+
+### 無効化
+
+`WAF` だけを止める:
+
+```bash
+docker compose stop waf
+```
+
+再開:
+
+```bash
+docker compose start waf
+```
+
+### 比較の考え方
+
+比較したいのは次の 2 点です。
+
+- 正常な Web リクエストは通るか
+- Web 向け攻撃パターンを WAF が詳細に止めるか
+
+### WAF 有効時の確認コマンド
+
+```bash
+curl -i http://127.0.0.1/
+curl -k -i https://127.0.0.1/api/health
+curl -i -A "sqlmap" http://127.0.0.1/
+curl -i "http://127.0.0.1/?q=<script>"
+curl -i "http://127.0.0.1/?q=union%20select"
+curl -i -X PUT http://127.0.0.1/
+```
+
+期待値:
+
+- `/`
+  - `200`
+- `/api/health`
+  - `200`
+- 危険 UA
+  - `403`
+- XSS / SQLi 風 query
+  - `403`
+- 非許可メソッド
+  - `405`
+
+### WAF 無効時の見え方
+
+`waf` を止めると、本線は `external-firewall -> nips -> waf -> reverse-proxy` の途中で切れます。
+
+そのため、今回の構成では次を確認できます。
+
+- 正常な Web リクエストも backend まで到達しなくなる
+- `WAF` が単なる後付けルールではなく、本線上の Web 向け検査・中継要素であることが分かる
+
+### 検査だけを無効化して比較する方法
+
+`stop` だと `WAF` 自体が経路から消えるため、比較用途としては「通信断」と「防御無効化」が混ざります。  
+そのため、このリポジトリでは pass-through 設定も用意しています。
+
+pass-through で再起動する:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.waf-bypass.yml up -d --force-recreate waf
+```
+
+通常の WAF に戻す:
+
+```bash
+docker compose up -d --force-recreate waf
+```
+
+pass-through 時の意味:
+
+- `WAF` コンテナ自体は本線上に残る
+- ただし危険 UA、危険 query、メソッド制限による遮断を行わない
+- そのため Web リクエストは `reverse-proxy` 側へそのまま流れる
+
+### 何が比較できるか
+
+- `WAF` 有効時
+  - 正常な Web リクエストは通る
+  - 危険 UA、危険 query、非許可メソッドは `403/405`
+- `WAF` 無効時
+  - NIPS までは通っても、WAF 以降へ流れず正常通信も成立しない
+
+pass-through 比較では次も確認できます。
+
+- `WAF` pass-through 時
+  - 正常な Web リクエストは通る
+  - 通常 WAF が止める危険 UA や危険 query も、WAF 自体では止めなくなる
+  - 「Web 向けの詳細防御は WAF が担っている」ことを説明しやすい
+
+この比較により、`NIPS` が広域的な侵入防止を担当し、`WAF` が Web アプリケーション向けの詳細防御を担当する、という責務差を説明できます。
+
+## 報告書向けのまとめ
+
+今回の WAF は、`NIPS` の後段で HTTP/HTTPS を詳細に検査する層として実装した。  
+実際に、正常な backend 向けリクエストは `200 OK` で通過しつつ、危険な User-Agent、XSS / SQLi を疑う query、非許可メソッドに対しては `403` または `405` を返すことを確認した。  
+この結果から、`NIPS` を広域的な侵入防止層、`WAF` を Web アプリケーション通信に特化した詳細防御層として分離して説明できる。
 
 ## 注意
 

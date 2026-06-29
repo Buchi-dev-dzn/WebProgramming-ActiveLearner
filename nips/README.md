@@ -116,7 +116,7 @@ Client
 ## 今回のリポジトリでの扱い
 
 現時点では `NIPS` を Docker Compose の直列サービスとして実装しています。  
-今回の実装は `HAProxy` を使った inline NIPS で、`external-firewall` と `reverse-proxy` の間に配置します。
+今回の実装は `HAProxy` を使った inline NIPS で、`external-firewall` の後段、`WAF` の前段に配置します。
 
 現在の本線:
 
@@ -124,6 +124,7 @@ Client
 Client
   -> External Firewall
   -> NIPS
+  -> WAF
   -> Reverse Proxy
   -> Internal Firewall
   -> Backend
@@ -140,7 +141,6 @@ Client
   - `Backend`
   - `Database`
 - 構想・次段階
-  - `WAF`
   - `API Gateway`
   - `NIDS`
   - `HIDS/HIPS`
@@ -231,7 +231,7 @@ HTTP 側では、平文の HTTP リクエストに対して次のパターンを
 
 ## 実測した検証結果
 
-今回の実装では、`external-firewall -> nips -> reverse-proxy` の本線に NIPS を差し込み、正常疎通と遮断の両方を確認しました。
+今回の実装では、`external-firewall -> nips -> waf -> reverse-proxy` の本線に NIPS を差し込み、正常疎通と遮断の両方を確認しました。
 
 ### 正常系
 
@@ -245,7 +245,7 @@ HTTP 側では、平文の HTTP リクエストに対して次のパターンを
 意味:
 
 - NIPS を経由しても正規トラフィックは backend まで通る
-- `External Firewall -> NIPS -> Reverse Proxy -> Application -> Backend` の本線が成立している
+- `External Firewall -> NIPS -> WAF -> Reverse Proxy -> Application -> Backend` の本線が成立している
 
 ### 遮断系
 
@@ -276,15 +276,129 @@ HTTP 側では、平文の HTTP リクエストに対して次のパターンを
 - 443 番ポートでは TLS handshake 妥当性までは見ているが、復号後の詳細検査は `WAF` 側の役割として残る
 - したがって、この NIPS は「広く止める」層であり、「Web に深く効く」層は将来の WAF で補完する前提である
 
+## 有効化・無効化と比較方法
+
+### 有効化
+
+`NIPS` を有効にした状態で本線を起動する:
+
+```bash
+docker compose up -d nips external-firewall reverse-proxy
+```
+
+必要なら設定変更を反映して再作成する:
+
+```bash
+docker compose up -d --force-recreate nips external-firewall
+```
+
+状態確認:
+
+```bash
+docker compose ps nips external-firewall reverse-proxy
+docker compose logs --tail=50 nips
+```
+
+### 無効化
+
+`NIPS` だけを止める:
+
+```bash
+docker compose stop nips
+```
+
+再開:
+
+```bash
+docker compose start nips
+```
+
+### 比較の考え方
+
+比較したいのは次の 2 点です。
+
+- 正常トラフィックは通るか
+- 広域的に危険と判断した通信を NIPS が止めるか
+
+### NIPS 有効時の確認コマンド
+
+```bash
+curl -i http://127.0.0.1/health
+curl -k -i https://127.0.0.1/api/health
+curl -i -A "sqlmap" http://127.0.0.1/
+curl -i "http://127.0.0.1/?q=<script>"
+curl -i "http://127.0.0.1/?q=union%20select"
+```
+
+期待値:
+
+- `/health`
+  - `200`
+- `/api/health`
+  - `200`
+- `sqlmap`
+  - `403`
+- XSS / SQLi 風 query
+  - `403`
+
+### NIPS 無効時の見え方
+
+`nips` を止めると、本線は `external-firewall -> nips -> waf ...` の途中で切れます。
+
+そのため、今回の構成では次を確認できます。
+
+- 正常な `/health` や `/api/health` も通らなくなる
+- `NIPS` が単なる観測点ではなく、本線上の遮断・中継要素であることが分かる
+
+### 検査だけを無効化して比較する方法
+
+`stop` だと経路自体が切れるため、「NIPS が無いと攻撃通信がどう見えるか」を比較しにくいです。  
+そのため、このリポジトリでは pass-through 設定も用意しています。
+
+pass-through で再起動する:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.nips-bypass.yml up -d --force-recreate nips
+```
+
+通常の NIPS に戻す:
+
+```bash
+docker compose up -d --force-recreate nips
+```
+
+pass-through 時の意味:
+
+- `NIPS` コンテナ自体は本線上に残る
+- ただし rate 制御や TLS ClientHello 検査、HTTP deny を行わない
+- そのため通信は `WAF` まで素通しされる
+
+### pass-through 比較で確認できること
+
+通常 NIPS:
+
+- flood 的な急増や不自然な TLS 通信を早い段階で止める
+- 平文 HTTP の明らかな不正パターンを `403/429` で止める
+
+pass-through NIPS:
+
+- NIPS 自体では止めず、後段の `WAF` やさらに先へ流れる
+- 「NIPS が広く早く止める層」であることを比較しやすい
+
+### 何が比較できるか
+
+- `NIPS` 有効時
+  - 正常通信は通る
+  - 広域的に危険な HTTP 通信は `403`
+- `NIPS` 無効時
+  - 入口から後段へ流れなくなり、正常通信も成立しない
+
+つまり、この比較により `NIPS` が「あるときだけ攻撃を止める追加ルール」ではなく、本線上で通信判定と遮断を担う inline 要素であることを説明できます。  
+また、pass-through 比較を使うと、「NIPS を止めたので経路が切れた」のではなく、「NIPS の検査を外したので後段まで通った」という説明ができます。
+
 ## 報告書向けのまとめ
 
 今回の NIPS は、`HAProxy` を用いて `External Firewall` と `Reverse Proxy` の間に inline で配置した。  
 これにより、正常な HTTP/HTTPS トラフィックを backend まで通しつつ、危険な User-Agent や XSS / SQLi を疑う HTTP リクエストを `403` で遮断できることを確認した。  
 また、443 番ポートでは TLS ClientHello の妥当性確認を行うことで、少なくとも暗号化セッション確立前の異常通信を拒否する基盤を持たせた。  
 一方で、HTTPS payload の深い L7 検査はまだ行っておらず、この部分は将来の WAF によって補完する想定である。
-
-## 報告書向けのまとめ
-
-今回の `NIPS` は、外周で許可された通信に対して、L3 から L7 までの情報を総合的に見ながら、不正と判断した通信を遮断する侵入防止層として位置づける。  
-今回の実装では `HAProxy` を inline に配置し、送信元 IP ごとの異常な接続レートや TLS handshake 異常、HTTP レベルの明らかな攻撃シグネチャを本線上で遮断する。  
-`External Firewall` が到達性そのものを制御し、将来の `WAF` が Web アプリケーション通信をさらに詳細に検査するのに対し、`NIPS` はその中間でネットワーク境界全体を対象に広く不正通信を止める役割を担う。

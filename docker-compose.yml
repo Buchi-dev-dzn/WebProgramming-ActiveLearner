@@ -21,6 +21,19 @@ services:
     volumes:
       - ./nips/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     depends_on:
+      - waf
+    networks:
+      - edge_net
+    restart: unless-stopped
+
+  waf:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./waf/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./waf/conf.d:/etc/nginx/conf.d:ro
+      - ./waf/certs:/etc/nginx/certs:ro
+      - ./logs/waf:/var/log/nginx
+    depends_on:
       - reverse-proxy
     networks:
       - edge_net
