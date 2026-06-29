@@ -90,3 +90,7 @@
 2026/06/29 05:15:42 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
 2026/06/29 05:16:47 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
 2026/06/29 05:17:53 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
+2026/06/29 05:18:58 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
+2026/06/29 05:20:03 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
+2026/06/29 05:21:09 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
+2026/06/29 05:22:14 [emerg] 1#1: host not found in upstream "application" in /etc/nginx/conf.d/default.conf:21
