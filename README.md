@@ -16,6 +16,11 @@ Docker Compose を使って、公開用の DMZ、非公開の Application 層、
 - Node.js
 - PostgreSQL
 
+## 補足ドキュメント
+
+- [CURRENT_ARCHITECTURE.md](/home/buchi/WebProgramming-ActiveLearner/CURRENT_ARCHITECTURE.md)
+  - Linux VM の入口、Docker 1 から Docker 6 までの現在構成、および未実装の想定レイヤーを Mermaid で整理した図
+
 ## 最終的に目指す構成
 
 ```mermaid
