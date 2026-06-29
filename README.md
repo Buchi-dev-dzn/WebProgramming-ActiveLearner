@@ -135,6 +135,12 @@ end
 
 現時点での主な対応は次の通りです。
 
+- `external-firewall` コンテナ
+  - `FW1 / External Firewall`
+  - 外周の L4 gateway を擬似的に再現
+- `nips` コンテナ
+  - `NIPS`
+  - inline proxy として本線上で遮断を行う
 - `reverse-proxy` コンテナ
   - `RP / Reverse Proxy`
   - DMZ の公開サーバを擬似的に再現
@@ -147,10 +153,6 @@ end
 
 まだ独立していない要素は、今後必要に応じて分離します。
 
-- `FW1`
-  - Docker の外側にある host / cloud firewall として設計する方が自然
-- `NIPS`
-  - Docker の直列サービスというより、VM やネットワーク境界で考える方が自然
 - `WAF`
   - reverse proxy 前段または同層で再導入可能
 - `API Gateway`
@@ -170,10 +172,13 @@ end
 
 - `external-firewall`
   - ホストに `80/443` を公開する唯一の入口
-  - 外周の L4 gateway として `reverse-proxy` にだけ TCP を流す
+  - 外周の L4 gateway として `nips` にだけ TCP を流す
+- `nips`
+  - `external-firewall` と `reverse-proxy` の間に置く inline NIPS
+  - source IP ごとの接続レート、TLS handshake、HTTP 攻撃シグネチャを見て遮断する
 - `reverse-proxy`
   - DMZ を模した公開サーバ
-  - `external-firewall` の後段で受ける
+  - `nips` の後段で受ける
   - `application` コンテナにだけ中継する
 - `application`
   - 外部公開しない内部アプリ層
@@ -187,8 +192,11 @@ end
 
 - `external-firewall/`
   - host で `80/443` を受ける唯一の入口
-  - `nginx stream` により `reverse-proxy` に TCP 転送する
+  - `nginx stream` により `nips` に TCP 転送する
   - host 側では必要に応じて `nftables` による packet filtering を補助適用できる
+- `nips/`
+  - inline NIPS の設定
+  - `HAProxy` により rate 制御、TLS handshake 検査、HTTP シグネチャ遮断を行う
 - `nginx/`
   - DMZ に置く reverse proxy の設定
 - `application/`
@@ -206,6 +214,7 @@ end
 ```text
 Client
   -> External Firewall
+  -> NIPS
   -> Reverse Proxy
   -> Internal Firewall
   -> Backend
@@ -215,6 +224,7 @@ Client
 つまり、最終図のうち現在主に再現できているのは次の要素です。
 
 - `FW1 / External Firewall`
+- `NIPS`
 - `RP / Reverse Proxy`
 - `FW2 / Internal Firewall`
 - `Back / Backend Application Server`
@@ -235,7 +245,6 @@ Client
 
 今後追加する対象は次の通りです。
 
-- `NIPS`
 - `WAF`
 - `API Gateway`
 - `NIDS`
@@ -249,8 +258,8 @@ Client
   - 旧構成で使っていた簡易 WAF 設定
   - 現在は `reverse-proxy` の TLS 証明書置き場も兼用
 - `nips/`
-  - NIPS の基本設計メモ
-  - L3 から L7 までを総合的に見て遮断する層として整理する
+  - NIPS の設定と設計メモ
+  - L3 から L7 までを総合的に見て遮断する inline 層
 - `nids-hids/`
   - 監視系の構成メモ
 
@@ -284,8 +293,10 @@ curl -k -i https://127.0.0.1/api/health
 - `external-firewall` 復旧後は `80/443` と HTTP/HTTPS 疎通が回復する
 - `nftables` 適用後も `80/443` の正常疎通は維持される
 - 一方、`input chain` だけでは Docker 公開ポート経路に対する遮断効果を明確には観測できなかった
+- `nips` 追加後も正常な HTTP/HTTPS 疎通は維持された
+- `nips` は危険な User-Agent と XSS / SQLi 風の HTTP リクエストを `403` で遮断した
 
-詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) の「ここまでの検証結果まとめ」を参照してください。
+詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) と [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md:1) を参照してください。
 
 ## 設計上の意図
 

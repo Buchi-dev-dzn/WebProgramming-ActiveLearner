@@ -10,9 +10,19 @@ services:
       - ./external-firewall/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./logs/external-firewall:/var/log/nginx
     depends_on:
-      - reverse-proxy
+      - nips
     networks:
       - public_net
+      - edge_net
+    restart: unless-stopped
+
+  nips:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./nips/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - reverse-proxy
+    networks:
       - edge_net
     restart: unless-stopped
 
