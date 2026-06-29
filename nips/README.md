@@ -158,10 +158,168 @@ Client
 設定ファイル:
 
 - `haproxy.cfg`
+- `haproxy.pass-through.cfg`
 
 使用イメージ:
 
 - `haproxy:2.9-alpine`
+
+## NIPS が実際にどう動くか
+
+今回の `NIPS` は `HAProxy` を使った inline proxy として動きます。  
+つまり、ミラー監視ではなく、通信が必ずこのコンテナを通る構造です。
+
+通信の流れは次の通りです。
+
+```text
+Client
+  -> External Firewall
+  -> NIPS(HAProxy)
+  -> WAF
+  -> Reverse Proxy
+  -> Application
+  -> Backend
+```
+
+ここで重要なのは、`NIPS` が「横から見る監視装置」ではなく、「通すか止めるかをその場で決める関所」だという点です。
+
+### 1. まず External Firewall から NIPS に届く
+
+最初に、公開入口である `External Firewall` が `80/443` のみを受けます。  
+その後、許可された通信だけが `nips` コンテナへ転送されます。
+
+つまり `NIPS` は、外部から来る全 Web 通信の最初の検査地点です。
+
+### 2. HAProxy が 80 番と 443 番を別々に受ける
+
+`haproxy.cfg` では frontend を 2 つ定義しています。
+
+- `frontend http_in`
+  - `bind :80`
+  - 平文 HTTP 用
+- `frontend https_in`
+  - `bind :443`
+  - TLS 通信用
+
+この分離により、HTTP と HTTPS で見られる情報の違いをそのまま実装に反映しています。
+
+### 3. HTTP は L7 まで見ながら判定する
+
+`http_in` では、送信元 IP ごとの状態を `stick-table` で記録しつつ、HTTP リクエスト自体も見ています。
+
+具体的には次を追跡します。
+
+- `conn_rate(10s)`
+  - 10 秒あたりの接続増加
+- `conn_cur`
+  - 現在の同時接続数
+- `http_req_rate(10s)`
+  - 10 秒あたりの HTTP リクエスト数
+
+動きとしては次の通りです。
+
+1. `http-request track-sc0 src`
+   - 送信元 IP を table に記録する
+2. `acl src_conn_abuse ...`
+   - 接続レート異常を判定する
+3. `acl src_conn_cur_abuse ...`
+   - 同時接続数異常を判定する
+4. `acl src_req_abuse ...`
+   - 短時間の過剰リクエストを判定する
+5. `http-request deny deny_status 429 if ...`
+   - 異常ならその場で `429` を返して止める
+
+つまり HTTP 側では、
+
+- flood 的な振る舞い
+- 明らかな多接続
+- 過剰な短時間アクセス
+
+を `NIPS` 自体が本線上で遮断します。
+
+### 4. HTTPS はまず TLS として妥当かを見る
+
+`https_in` は `mode tcp` で動いています。  
+これは、HTTPS payload をここで復号して精査するのではなく、まず TCP/TLS の入口として不自然でないかを見るためです。
+
+ここで行っていることは次です。
+
+1. `tcp-request connection track-sc0 src`
+   - 送信元 IP を追跡する
+2. `acl tls_conn_abuse ...`
+   - 443 に対する接続レート異常を見る
+3. `acl tls_conn_cur_abuse ...`
+   - 同時接続の異常を見る
+4. `acl client_hello req.ssl_hello_type 1`
+   - TLS ClientHello として妥当かを見る
+5. `tcp-request connection reject if ...`
+   - 接続異常なら拒否する
+6. `tcp-request content reject if !client_hello`
+   - TLS として不自然なら拒否する
+
+つまり HTTPS 側では、
+
+- 443 に大量接続してくる不審な振る舞い
+- TLS handshake として成立していない不自然な通信
+
+を早い段階で止めています。
+
+### 5. 問題がなければ WAF に渡す
+
+`NIPS` は最終到達点ではなく、中継しながら判定する層です。  
+異常が無い通信だけを backend に渡します。
+
+現在の backend は次の 2 つです。
+
+- `backend waf_http`
+  - `server waf waf:80`
+- `backend waf_https`
+  - `server waf waf:443`
+
+したがって、
+
+- HTTP は `waf:80`
+- HTTPS は `waf:443`
+
+へ流れ、以降の Web 向け詳細検査は `WAF` が担当します。
+
+### 6. どこで止まったかの考え方
+
+今回の `NIPS` では、挙動を見ると大まかに次のように判断できます。
+
+- `429`
+  - 接続数やリクエストレートが閾値を超えた
+- TCP レベルで切断
+  - TLS handshake 異常、または 443 側の接続異常
+- 正常に次へ進む
+  - `WAF` へ転送された
+
+つまり、`NIPS` はアプリのレスポンスを返す装置ではなく、「入口で落とすか、次へ通すか」を決める装置として動いています。
+
+### 7. pass-through では何が変わるか
+
+`haproxy.pass-through.cfg` では、通常版にある遮断判定を外しています。
+
+そのため pass-through 時は次の動きになります。
+
+- `NIPS` コンテナ自体は本線上に残る
+- ただし `stick-table` による遮断や TLS 異常拒否を行わない
+- 受けた通信をそのまま `WAF` に流す
+
+これにより、
+
+- 通常 NIPS
+  - 早い段階で広く止める
+- pass-through NIPS
+  - 入口では止めず、後段へ流す
+
+という差分を比較できます。
+
+### 8. この実装をどう説明すればよいか
+
+報告書では、次のように書くと整理しやすいです。
+
+`NIPS` は `HAProxy` を用いた inline proxy として実装し、External Firewall を通過した 80/443 の通信を最初に受ける。HTTP では送信元ごとの接続レート・同時接続数・リクエスト数を監視し、閾値超過時は `429` を返して遮断する。HTTPS では TCP/TLS の入口で接続異常と TLS ClientHello 妥当性を確認し、不自然な通信を拒否する。正常な通信のみを後段の `WAF` に渡すことで、`NIPS` は広域的な侵入防止層、`WAF` は Web アプリケーション向けの詳細防御層として役割分担している。
 
 ### L3 / L4 で見ているもの
 
