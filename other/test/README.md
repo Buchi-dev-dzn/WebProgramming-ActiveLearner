@@ -60,11 +60,11 @@
 
 | 項目 | 有効時 | 停止時 | メモ |
 | --- | --- | --- | --- |
-| `80/tcp` |  |  |  |
-| `443/tcp` |  |  |  |
-| `22/tcp` |  |  |  |
-| `8080/tcp` |  |  |  |
-| `5432/tcp` |  |  |  |
+| `80/tcp` | open | filtered |  |
+| `443/tcp` | open | filtered |  |
+| `22/tcp` | open | open |  |
+| `8080/tcp` | filtered | filtered |  |
+| `5432/tcp` | filtered | filtered |  |
 | 外部入口としての意味 | `80/443` が唯一の入口 | 入口自体が失われる |  |
 
 推奨コマンド:
@@ -75,13 +75,18 @@ python3 other/test/external-firewall/portscan.py 192.168.64.4 --ports 22,80,443,
 
 ### NIPS
 
-| 項目 | 通常 NIPS | pass-through NIPS | stopped NIPS | メモ |
-| --- | --- | --- | --- | --- |
-| `GET /health` |  |  |  |  |
-| `GET /api/health` over HTTPS |  |  |  |  |
-| burst 時の `200` 件数 |  |  |  |  |
-| burst 時の `429` 件数 |  |  |  |  |
-| NIPS が遮断したと言えるか |  |  |  |  |
+#### 検知無効時
+baseline_http 200 waf ok
+baseline_https 200 {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+burst total=180 ok_200=180 blocked_429=0 other={}
+nips_effect_detected no
+
+#### 検知有効時
+> python3 test/check_nips.py 192.168.64.4 --burst-size 180 --concurrency 80
+baseline_http 200 waf ok
+baseline_https 200 {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+burst total=180 ok_200=59 blocked_429=121 other={}
+nips_effect_detected yes
 
 推奨コマンド:
 
@@ -102,15 +107,54 @@ python3 other/test/nips/check_nips.py 192.168.64.4
 
 ### WAF
 
-| 項目 | 通常 WAF | pass-through WAF | stopped WAF | メモ |
-| --- | --- | --- | --- | --- |
-| `GET /` |  |  |  |  |
-| `GET /api/health` over HTTPS |  |  |  |  |
-| `User-Agent: sqlmap` |  |  |  |  |
-| `?q=<script>` |  |  |  |  |
-| `?q=union select` |  |  |  |  |
-| `PUT /` |  |  |  |  |
-| WAF が遮断したと言えるか |  |  |  |  |
+#### 検知無効時
+> python3 test/check_waf.py 192.168.64.4                                   
+http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+blocked_sqlmap_ua expected=403 actual=200 matched=no reverse-proxy active
+blocked_script_query expected=403 actual=200 matched=no reverse-proxy active
+blocked_union_query expected=403 actual=200 matched=no reverse-proxy active
+blocked_put_method expected=405 actual=200 matched=no reverse-proxy active
+all_matched > [!NOTE]
+> 
+
+#### 検知有効時
+[.venv] ~/Documents/Programming/school/web_programming | [0s]
+> python3 test/check_waf.py 192.168.64.4
+http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+blocked_sqlmap_ua expected=403 actual=403 matched=yes <html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+blocked_script_query expected=403 actual=403 matched=yes <html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+blocked_union_query expected=403 actual=403 matched=yes <html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+blocked_put_method expected=405 actual=405 matched=yes <html>
+<head><title>405 Not Allowed</title></head>
+<body>
+<center><h1>405 Not Allowed</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+all_matched yes
+
+
+
 
 推奨コマンド:
 
