@@ -108,7 +108,8 @@ python3 other/test/nips/check_nips.py 192.168.64.4
 ### WAF
 
 #### 検知無効時
-> python3 test/check_waf.py 192.168.64.4                                   
+~/Documents/Programming/school/web_programming/test | [0s]
+> python3 check_waf.py 192.168.64.4
 http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
 https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
 blocked_sqlmap_ua expected=403 actual=200 matched=no reverse-proxy active
@@ -118,12 +119,12 @@ blocked_dotgit_path expected=403 actual=200 matched=no reverse-proxy active
 blocked_override_header expected=403 actual=200 matched=no {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
 unknown_route_not_found expected=404 actual=200 matched=no reverse-proxy active
 blocked_put_method expected=405 actual=200 matched=no reverse-proxy active
-all_matched > [!NOTE]
-> 
+all_matched no
 
 #### 検知有効時
-[.venv] ~/Documents/Programming/school/web_programming | [0s]
-> python3 test/check_waf.py 192.168.64.4
+
+~/Documents/Programming/school/web_programming/test | [0s]
+> python3 check_waf.py 192.168.64.4
 http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
 https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
 blocked_sqlmap_ua expected=403 actual=403 matched=yes <html>
@@ -147,10 +148,10 @@ blocked_union_query expected=403 actual=403 matched=yes <html>
 <hr><center>nginx</center>
 </body>
 </html>
-blocked_dotgit_path expected=403 actual=403 matched=yes <html>
-<head><title>403 Forbidden</title></head>
+blocked_dotgit_path expected=403 actual=404 matched=no <html>
+<head><title>404 Not Found</title></head>
 <body>
-<center><h1>403 Forbidden</h1></center>
+<center><h1>404 Not Found</h1></center>
 <hr><center>nginx</center>
 </body>
 </html>
@@ -175,10 +176,10 @@ blocked_put_method expected=405 actual=405 matched=yes <html>
 <hr><center>nginx</center>
 </body>
 </html>
-all_matched yes
+all_matched no
 
-
-
+~/Documents/Programming/school/web_programming/test | [0s]
+> 
 
 推奨コマンド:
 
