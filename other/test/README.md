@@ -1,6 +1,6 @@
 # Security Layer Tests
 
-このディレクトリには、Mac ホストなど Linux VM の外側から `External Firewall`, `NIPS`, `WAF` の動作を検証するためのテストを置きます。
+このディレクトリには、Mac ホストなど Linux VM の外側から `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `FastAPI` の動作を検証するためのテストを置きます。
 
 ## 目的
 
@@ -10,6 +10,10 @@
   - inline 防御としてレート異常を `429` で遮断するか確認する
 - `WAF`
   - Web 向け攻撃パターン、不要ルート探索、非許可メソッドを `403/404/405` で遮断するか確認する
+- `Reverse Proxy`
+  - DMZ 公開中継点として `/health`, ルート制限, request ID, upstream 障害応答を制御できるか確認する
+- `FastAPI`
+  - `/api/health`, `/api/info` と依存 DB 劣化時の JSON 応答を確認する
 
 ## 前提
 
@@ -26,6 +30,10 @@
   - 正常疎通とレート遮断の確認
 - [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/waf/README.md)
   - 正常疎通と `403/404/405` 遮断の確認
+- [reverse-proxy/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/reverse-proxy/README.md)
+  - DMZ 中継と upstream 障害時の確認
+- [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/fastapi/README.md)
+  - API 応答と DB 劣化時の確認
 
 ## 使い分け
 
@@ -35,6 +43,10 @@
   - `nips/check_nips.py`
 - WAF が Web 向けに「深く止める」か見たい
   - `waf/check_waf.py`
+- RP が DMZ 公開中継点として正しく返すか見たい
+  - `reverse-proxy/check_reverse_proxy.py`
+- FastAPI が正常系と劣化系でどう返すか見たい
+  - `fastapi/check_fastapi.py`
 
 ## 典型的な実行順序
 
@@ -44,11 +56,17 @@
    - `python3 other/test/nips/check_nips.py 192.168.64.4`
 3. WAF
    - `python3 other/test/waf/check_waf.py 192.168.64.4`
+4. Reverse Proxy
+   - `python3 other/test/reverse-proxy/check_reverse_proxy.py 192.168.64.4`
+5. FastAPI
+   - `python3 other/test/fastapi/check_fastapi.py 192.168.64.4`
 
 ## 注意
 
 - `NIPS` のレート試験は短時間に多数のリクエストを送るため、VM が高負荷なタイミングでは結果がぶれることがある
 - `WAF` の `403/404/405` は `WAF` 有効時を前提にしている
+- `Reverse Proxy` の比較では `internal-firewall` 停止時の `503` を見る
+- `FastAPI` の比較では `postgres` 停止時の `503/degraded` を見る
 - `pass-through` 構成で比較したい場合は、各 README にある無効化・比較手順を使う
 
 ## 比較メモ用テーブル
@@ -199,3 +217,39 @@ python3 other/test/waf/check_waf.py 192.168.64.4
   - WAF 自体では `403/404/405` を返さなくなる
 - `stopped WAF`
   - 本線が切れ、正常通信も成立しない
+
+### Reverse Proxy
+
+| 項目 | 通常時 | 後段停止時 | メモ |
+| --- | --- | --- | --- |
+| `GET /health` | `200 reverse-proxy ok` | `200 reverse-proxy ok` | RP 自身の生存確認 |
+| `GET /` | `404 {"error":"not_found"}` | `404 {"error":"not_found"}` | 公開面を広げない |
+| `GET /api` | `404` | `404` | WAF の許可ルート外 |
+| `GET /api/info` | `200 fastapi-api` | `503 upstream_unavailable` | RP の代理返却と障害正規化 |
+| `request_id` | ヘッダと本文で一致 | なしでも可 | 正常時の伝播確認 |
+
+推奨コマンド:
+
+```bash
+python3 other/test/reverse-proxy/check_reverse_proxy.py 192.168.64.4
+docker compose stop internal-firewall
+python3 other/test/reverse-proxy/check_reverse_proxy.py 192.168.64.4 --expect-upstream-unavailable
+docker compose start internal-firewall
+```
+
+### FastAPI
+
+| 項目 | 通常時 | DB停止時 | メモ |
+| --- | --- | --- | --- |
+| `GET /api/health` | `200 status=ok` | `503 status=degraded` | 依存障害の見え方 |
+| `GET /api/info` | `200 fastapi-api` | `200 fastapi-api` | アプリ自体の生存 |
+| `request_id` | ヘッダと本文で一致 | ヘッダと本文で一致 | 追跡性 |
+
+推奨コマンド:
+
+```bash
+python3 other/test/fastapi/check_fastapi.py 192.168.64.4
+docker compose stop postgres
+python3 other/test/fastapi/check_fastapi.py 192.168.64.4 --expect-degraded-health
+docker compose start postgres
+```

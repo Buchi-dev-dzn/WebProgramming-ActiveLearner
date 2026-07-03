@@ -15,7 +15,9 @@
 - `reverse-proxy` から `app_net` で到達する前提
 - `fastapi-app:8000` を単一 upstream として使用
 - `/api` は `/api/` へ正規化
-- upstream 障害時は JSON の `503 {"error":"upstream_unavailable"}` を返す
+- upstream 障害時は `502/504` を JSON の `503 {"error":"upstream_unavailable"}` に変換する
+- 後段アプリケーション自身が返す `503` は、そのまま外へ返す
+- upstream timeout は短めにして、後段停止時に外側比較しやすくしている
 
 ## 通信位置づけ
 

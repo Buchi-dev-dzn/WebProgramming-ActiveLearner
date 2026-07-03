@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -12,15 +13,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db_pool = None
-    if DATABASE_URL:
-        app.state.db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
-    try:
-        yield
-    finally:
-        pool = app.state.db_pool
-        if pool is not None:
-            await pool.close()
+    yield
 
 
 app = FastAPI(title="security-ec-fastapi", lifespan=lifespan)
@@ -43,11 +36,14 @@ async def run_health_checks(request: Request) -> tuple[int, dict[str, Any]]:
     checks: dict[str, Any] = {"postgres": {"status": "not_configured"}}
     overall_status = "ok"
 
-    pool = request.app.state.db_pool
-    if pool is not None:
+    if DATABASE_URL:
         try:
-            async with pool.acquire() as connection:
-                await connection.fetchval("SELECT 1")
+            async with asyncio.timeout(2):
+                connection = await asyncpg.connect(DATABASE_URL, timeout=1)
+                try:
+                    await connection.fetchval("SELECT 1")
+                finally:
+                    await connection.close()
             checks["postgres"] = {"status": "ok"}
         except Exception as error:  # noqa: BLE001
             overall_status = "degraded"
