@@ -9,7 +9,7 @@
 - `NIPS`
   - inline 防御としてレート異常を `429` で遮断するか確認する
 - `WAF`
-  - Web 向け攻撃パターンを `403/405` で遮断するか確認する
+  - Web 向け攻撃パターン、不要ルート探索、非許可メソッドを `403/404/405` で遮断するか確認する
 
 ## 前提
 
@@ -25,7 +25,7 @@
 - [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/nips/README.md)
   - 正常疎通とレート遮断の確認
 - [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/waf/README.md)
-  - 正常疎通と `403/405` 遮断の確認
+  - 正常疎通と `403/404/405` 遮断の確認
 
 ## 使い分け
 
@@ -48,7 +48,7 @@
 ## 注意
 
 - `NIPS` のレート試験は短時間に多数のリクエストを送るため、VM が高負荷なタイミングでは結果がぶれることがある
-- `WAF` の `403` と `405` は `WAF` 有効時を前提にしている
+- `WAF` の `403/404/405` は `WAF` 有効時を前提にしている
 - `pass-through` 構成で比較したい場合は、各 README にある無効化・比較手順を使う
 
 ## 比較メモ用テーブル
@@ -114,6 +114,9 @@ https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api"
 blocked_sqlmap_ua expected=403 actual=200 matched=no reverse-proxy active
 blocked_script_query expected=403 actual=200 matched=no reverse-proxy active
 blocked_union_query expected=403 actual=200 matched=no reverse-proxy active
+blocked_dotgit_path expected=403 actual=200 matched=no reverse-proxy active
+blocked_override_header expected=403 actual=200 matched=no {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+unknown_route_not_found expected=404 actual=200 matched=no reverse-proxy active
 blocked_put_method expected=405 actual=200 matched=no reverse-proxy active
 all_matched > [!NOTE]
 > 
@@ -144,6 +147,27 @@ blocked_union_query expected=403 actual=403 matched=yes <html>
 <hr><center>nginx</center>
 </body>
 </html>
+blocked_dotgit_path expected=403 actual=403 matched=yes <html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+blocked_override_header expected=403 actual=403 matched=yes <html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
+unknown_route_not_found expected=404 actual=404 matched=yes <html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx</center>
+</body>
+</html>
 blocked_put_method expected=405 actual=405 matched=yes <html>
 <head><title>405 Not Allowed</title></head>
 <body>
@@ -166,10 +190,11 @@ python3 other/test/waf/check_waf.py 192.168.64.4
 
 - `通常 WAF`
   - 正常通信は通る
-  - 危険 UA / 危険 query は `403`
+  - 危険 UA / 危険 query / 危険 path / URL override header は `403`
+  - 未許可ルートは `404`
   - 非許可メソッドは `405`
 - `pass-through WAF`
   - 正常通信は通る
-  - WAF 自体では `403/405` を返さなくなる
+  - WAF 自体では `403/404/405` を返さなくなる
 - `stopped WAF`
   - 本線が切れ、正常通信も成立しない

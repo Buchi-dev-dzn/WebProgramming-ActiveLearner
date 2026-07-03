@@ -49,6 +49,138 @@ Client
   - 本線上で rate 異常や TLS handshake 異常を見て広く止める
 - `WAF`
   - HTTP/HTTPS を詳細に見て、Web 向け攻撃を止める
+  - 到達可能なルートを必要最小限に絞る
+
+## 今回の変更内容
+
+今回の厳格化では、単純な `危険文字列を含むか` だけではなく、`どのルートに到達させるか`, `どのヘッダを信用しないか`, `どの程度のリクエスト量を許すか` まで WAF 側で明示するようにした。
+
+### 1. 許可ルート方式に変更した
+
+従来は `location /` で広く後段へ流していたが、現在は次だけを許可している。
+
+- `GET /`
+- `HEAD /`
+- `GET /health`
+- `HEAD /health`
+- `GET /api/health`
+- `HEAD /api/health`
+- `GET /api/info`
+- `HEAD /api/info`
+- `POST /api/health`
+- `POST /api/info`
+
+これ以外は WAF 段階で `404` を返す。
+
+意味:
+
+- 不要な管理パス探索や未知エンドポイント探索を後段に流さない
+- `reverse-proxy` や `application` に届く前に到達面を絞れる
+- 「通す URL を列挙する」形なので、後から監査しやすい
+
+### 2. path ベースの遮断を強化した
+
+従来の簡単な traversal 検知に加えて、次のような探索系 path を拒否するようにした。
+
+- `/.git`
+- `/.env`
+- `/server-status`
+- `/actuator`
+- `/admin`
+- `/console`
+- `/boaform`
+- `/wp-admin`
+- `/wp-login.php`
+- `/phpmyadmin`
+- `/etc/passwd`
+- `../` の通常表現
+- `%2e%2e`, `%252e%252e%252f` などの URL エンコードや二重エンコード
+- `%5c` を使うバックスラッシュ系 traversal
+
+意味:
+
+- 秘密情報や設定情報の露出を狙う典型パスを前段で止める
+- エンコードを使った単純な回避をされにくくする
+- 管理画面探索や既知ミドルウェア探索を早い段階で落とせる
+
+### 3. query ベースの遮断を強化した
+
+従来の `union select` や `<script>` に加えて、次のようなパターンも見ている。
+
+- `select ... from`
+- `sleep(`
+- `benchmark(`
+- `<svg`
+- `javascript:`
+- `onerror=`
+- `onload=`
+- `or 1=1`
+- `information_schema`
+- `load_file(`
+- `into outfile`
+- `${jndi:`
+- query 内 traversal
+
+意味:
+
+- SQLi と XSS の初歩的な派生形を少し広く拾える
+- JNDI 文字列のような分かりやすい危険シグネチャも前段で落とせる
+- 「危険 query は通さない」という説明を具体化できる
+
+### 4. URL override header を拒否するようにした
+
+次のヘッダを WAF で拒否する。
+
+- `X-Original-URL`
+- `X-Rewrite-URL`
+
+意味:
+
+- 後段がこれらのヘッダを解釈する構成に変わった場合でも、前段で余計な URL 差し替えを防ぎやすい
+- ルート制限をヘッダで迂回しようとする試行を抑止できる
+
+### 5. request body サイズを縮小した
+
+- 変更前
+  - `client_max_body_size 1m`
+- 変更後
+  - `client_max_body_size 256k`
+
+意味:
+
+- この学習用 API で必要のない大きな body を早めに拒否できる
+- 無意味に大きな POST を後段へ流さずに済む
+
+### 6. WAF 段階のレート制限を追加した
+
+`nginx.conf` で `limit_req_zone` を定義し、許可ルート側で `limit_req` を適用した。
+
+- レート
+  - `20r/s`
+- burst
+  - `20`
+- 対象
+  - `/`
+  - `/api/health`
+  - `/api/info`
+
+意味:
+
+- `NIPS` の広域レート制御とは別に、WAF で Web リクエスト量も抑えられる
+- 正常系の疎通確認は通しつつ、極端な連打はここでも絞れる
+- HTTP レイヤーでもう 1 段制御が入る
+
+### 7. nginx の受理ポリシーも少し厳しくした
+
+- `ignore_invalid_headers on`
+- `underscores_in_headers off`
+- `server_tokens off`
+
+意味:
+
+- 妥当でないヘッダを受け入れにくくする
+- 不要なヘッダ解釈を減らす
+- サーバ情報の露出を抑える
 
 ## 今回の WAF が見るもの
 
@@ -56,6 +188,8 @@ Client
 - 危険な User-Agent
 - path traversal や管理画面探索
 - SQLi / XSS を疑う query
+- URL override を狙う不審ヘッダ
+- 未許可ルートへの探索
 - 過大な request body
 
 ## 実測で確認したいこと
@@ -63,6 +197,9 @@ Client
 - 正常な `/health` と `/api/health` は通る
 - `sqlmap` などの明らかな危険 UA は `403`
 - `?q=<script>` や `?q=union%20select` は `403`
+- `/.git/config` や traversal 系 path は `403`
+- `X-Original-URL` などの URL override header は `403`
+- 未許可ルートは `404`
 - 非許可メソッドは `405`
 
 ## 実測した検証結果

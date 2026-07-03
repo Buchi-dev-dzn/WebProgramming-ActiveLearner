@@ -130,6 +130,28 @@ def main() -> None:
             args.timeout,
         ),
         request_case(
+            "blocked_dotgit_path",
+            "GET",
+            f"http://{args.target}:{args.http_port}/.git/config",
+            403,
+            args.timeout,
+        ),
+        request_case(
+            "blocked_override_header",
+            "GET",
+            f"http://{args.target}:{args.http_port}/api/health",
+            403,
+            args.timeout,
+            headers={"X-Original-URL": "/admin"},
+        ),
+        request_case(
+            "unknown_route_not_found",
+            "GET",
+            f"http://{args.target}:{args.http_port}/admin",
+            404,
+            args.timeout,
+        ),
+        request_case(
             "blocked_put_method",
             "PUT",
             f"http://{args.target}:{args.http_port}/",

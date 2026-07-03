@@ -2,11 +2,21 @@
 
 このテストは、Mac ホストなど VM 外部から `WAF` の Web 向け遮断を確認するためのものです。
 
+## 前提
+
+- テストは Linux VM の中ではなく、Mac ホストなど VM 外部から実行する
+- 想定 VM IP は `192.168.64.4`
+- Python 3.10 以上を利用する
+- HTTPS は自己署名証明書のため、スクリプト内で証明書検証を無効化している
+- 通常構成では `external-firewall -> nips -> waf -> reverse-proxy -> application -> backend` の本線が起動している前提
+
 ## 何を検証するか
 
 - 正常な HTTP/HTTPS は通るか
 - 危険な User-Agent を `403` で止めるか
 - 危険な query を `403` で止めるか
+- 危険な path や URL override header を `403` で止めるか
+- 未許可ルートを `404` で閉じるか
 - 非許可メソッドを `405` で止めるか
 
 ## スクリプト
@@ -19,6 +29,12 @@
 
 ```bash
 python3 other/test/waf/check_waf.py 192.168.64.4
+```
+
+タイムアウトを長めにする:
+
+```bash
+python3 other/test/waf/check_waf.py 192.168.64.4 --timeout 5
 ```
 
 JSON で出す:
@@ -39,13 +55,52 @@ python3 other/test/waf/check_waf.py 192.168.64.4 --json
   - `403`
 - `?q=union%20select`
   - `403`
+- `GET /.git/config`
+  - `403`
+- `X-Original-URL: /admin`
+  - `403`
+- `GET /admin`
+  - `404`
 - `PUT /`
   - `405`
 
 ## 有効時の意味
 
 - `WAF` が後段の `reverse-proxy` の前で HTTP/HTTPS を精査している
-- Web 向け攻撃パターンや非許可メソッドを遮断している
+- Web 向け攻撃パターン、URL override header、不要ルート探索を遮断している
+- 到達可能なルートが必要最小限に絞られている
+
+## 出力の見方
+
+通常実行では 1 ケース 1 行で結果が出る。
+
+- `expected`
+  - 期待するステータスコード
+- `actual`
+  - 実際に返ったステータスコード
+- `matched=yes`
+  - 期待どおり
+- `matched=no`
+  - 期待と違うため、設定漏れか経路異常を疑う
+
+末尾の `all_matched yes` が、全ケース成功の目印。
+
+正常系の例:
+
+```text
+http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+```
+
+遮断系の例:
+
+```text
+blocked_sqlmap_ua expected=403 actual=403 matched=yes <html>...
+blocked_dotgit_path expected=403 actual=403 matched=yes <html>...
+unknown_route_not_found expected=404 actual=404 matched=yes <html>...
+blocked_put_method expected=405 actual=405 matched=yes <html>...
+all_matched yes
+```
 
 ## 無効化方法
 
@@ -75,16 +130,49 @@ docker compose -f docker-compose.yml -f docker-compose.waf-bypass.yml up -d --fo
 docker compose up -d --force-recreate waf
 ```
 
+## 比較のしかた
+
+まず通常 WAF で確認する:
+
+```bash
+python3 other/test/waf/check_waf.py 192.168.64.4
+```
+
+次に pass-through で比較する:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.waf-bypass.yml up -d --force-recreate waf
+python3 other/test/waf/check_waf.py 192.168.64.4
+```
+
+最後に通常 WAF に戻す:
+
+```bash
+docker compose up -d --force-recreate waf
+```
+
 ## 比較ポイント
 
 - 通常 WAF
   - 正常通信は通る
-  - 危険 UA / 危険 query は `403`
+  - 危険 UA / 危険 query / 危険 path / URL override header は `403`
+  - 未許可ルートは `404`
   - 非許可メソッドは `405`
 - pass-through WAF
   - 正常通信は通る
-  - WAF 自体では `403/405` を返さなくなる
+  - WAF 自体では `403/404/405` を返さなくなる
 - stopped WAF
   - 本線が切れ、正常通信も成立しない
+
+## 異常時の見方
+
+- 正常系まで失敗する
+  - `waf` 停止、後段停止、または本線断を疑う
+- `403` になるべきケースが `200`
+  - WAF ルールが弱い、または pass-through 構成が有効な可能性がある
+- `404` になるべきケースが `200`
+  - 許可ルート制限が効いていない
+- `405` になるべきケースが `200`
+  - メソッド制限が効いていない
 
 詳細は [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md) を参照。
