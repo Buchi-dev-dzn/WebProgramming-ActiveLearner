@@ -19,6 +19,10 @@
 - `/health` を RP 自身のヘルスチェックとして返す
 - `80/443` を listen するが、host へは直接公開しない
 - 証明書は現状 `waf/certs/` を共有して使用
+- `upstream` は現状 `application:80` の単一系
+- `/api/` 以外の一般リクエストは backend へ流さず `404` を返す
+- `request_id` を付与し、後段にも引き継ぐ
+- upstream 障害時は Nginx 既定の HTML ではなく JSON エラーを返す
 
 ## 現在の通信経路
 
@@ -56,11 +60,32 @@ Client
 
 - `listen 80` と `listen 443 ssl` で HTTP/HTTPS を受ける
 - `location /api/` を `application:80` へ `proxy_pass` する
-- `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` を後段へ渡す
+- `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port` を後段へ渡す
+- `X-Request-Id` を付与して、クライアント応答と後段ログをひも付けやすくする
+- `proxy_connect_timeout`, `proxy_send_timeout`, `proxy_read_timeout` を設定して、後段異常時に無制限待機しない
+- upstream 障害時は `502/503/504` を JSON に変換して返す
+- access log に upstream 宛先、upstream status、応答時間を残す
+- `client_max_body_size` を 1MB に制限する
 - `/health` で RP 自身の稼働確認を返す
-- `/` では固定レスポンスを返し、RP 自体の生存を確認できるようにする
+- `/api/` 以外の一般公開パスは `404` にして、DMZ 上の公開面を広げすぎない
 
 これにより、後段の application や backend を外部へ直接さらさずに、DMZ 上の 1 点から内部へ中継する構成になっています。
+
+## 今回ここで固定する RP の最低限仕様
+
+現段階では、`reverse-proxy` の最低限仕様を次のように置きます。
+
+- 公開対象パスは `/health` と `/api/` 系のみ
+- `/api/` は後段 `application` にそのまま中継する
+- backend のレスポンスは RP が代理返却する
+- RP 自身は業務レスポンスを持たない
+- 後段に渡す forwarded header は RP 側で明示する
+- リクエスト追跡用の ID を RP で付与する
+- 後段異常時に備えて timeout を持つ
+- 後段異常時も RP らしい応答形式で返す
+- DMZ の公開面を広げないため、不要パスは `404` で返す
+
+この仕様により、RP を `通すための層` として保ちつつ、後段の FastAPI に移行しても前段の公開経路を変えずに済むようにします。
 
 ## Reverse Proxy としてまだ持たせていないもの
 
@@ -69,10 +94,10 @@ Client
 - upstream の明示定義
 - 複数 backend への負荷分散
 - retry や failover 制御
-- timeout の詳細調整
 - path ごとの厳密な公開制御
 - 認証認可や業務ロジック
 - WAF 相当の詳細検査
+- 複数 upstream を前提にした冗長化
 
 これは意図的です。  
 現在は `WAF` を優先し、`reverse-proxy` には `DMZ の公開中継点` としての最小責務を持たせています。
@@ -112,7 +137,20 @@ Client
 
 - `waf` 側でも TLS を扱っており、`reverse-proxy` 側の `443 ssl` は現時点では主経路で強くは使われていない
 - `application` コンテナ内にも nginx があり、RP と Internal Firewall の責務が 2 段になっている
-- `/` の固定レスポンスは疎通確認用であり、本番用の公開仕様ではない
+- エラーレスポンスは JSON 化したが、詳細な障害分類まではまだ行っていない
+- ログは取り始めたが、集約や可視化はまだ未整備
+
+## 今回追加した運用寄りの整備
+
+今回の段階で、RP を単なる疎通確認用から少し進めて、運用上の観測性も持たせました。
+
+- `request_id` をレスポンスと後段転送の両方に付与
+- access log に upstream 宛先、upstream status、処理時間を追加
+- `/api` へのアクセスを `/api/` に正規化
+- upstream 障害時に JSON エラーを返す
+- 単一 upstream 前提のため `proxy_next_upstream off` を明示
+
+これにより、後段の FastAPI 化を進めたときも、`どのリクエストがどこへ流れ、どこで失敗したか` を RP 視点で追いやすくしています。
 
 今後 `FastAPI` を本格化する際は、次を詰める必要があります。
 
