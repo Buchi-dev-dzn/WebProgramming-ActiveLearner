@@ -76,15 +76,15 @@ python3 other/test/external-firewall/portscan.py 192.168.64.4 --ports 22,80,443,
 ### NIPS
 
 #### 検知無効時
-baseline_http 200 waf ok
-baseline_https 200 {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+baseline_http 200 reverse-proxy ok
+baseline_https 200 {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
 burst total=180 ok_200=180 blocked_429=0 other={}
 nips_effect_detected no
 
 #### 検知有効時
 > python3 test/check_nips.py 192.168.64.4 --burst-size 180 --concurrency 80
-baseline_http 200 waf ok
-baseline_https 200 {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+baseline_http 200 reverse-proxy ok
+baseline_https 200 {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
 burst total=180 ok_200=59 blocked_429=121 other={}
 nips_effect_detected yes
 
@@ -110,23 +110,23 @@ python3 other/test/nips/check_nips.py 192.168.64.4
 #### 検知無効時
 ~/Documents/Programming/school/web_programming/test | [0s]
 > python3 check_waf.py 192.168.64.4
-http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
-https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
-blocked_sqlmap_ua expected=403 actual=200 matched=no reverse-proxy active
-blocked_script_query expected=403 actual=200 matched=no reverse-proxy active
-blocked_union_query expected=403 actual=200 matched=no reverse-proxy active
-blocked_dotgit_path expected=403 actual=200 matched=no reverse-proxy active
-blocked_override_header expected=403 actual=200 matched=no {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
-unknown_route_not_found expected=404 actual=200 matched=no reverse-proxy active
-blocked_put_method expected=405 actual=200 matched=no reverse-proxy active
+http_root_ok expected=404 actual=404 matched=yes {"error":"not_found"}
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
+blocked_sqlmap_ua expected=403 actual=404 matched=no {"error":"not_found"}
+blocked_script_query expected=403 actual=404 matched=no {"error":"not_found"}
+blocked_union_query expected=403 actual=404 matched=no {"error":"not_found"}
+blocked_dotgit_path expected=403 actual=404 matched=no {"error":"not_found"}
+blocked_override_header expected=403 actual=200 matched=no {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
+unknown_route_not_found expected=404 actual=404 matched=yes <html>...
+blocked_put_method expected=405 actual=405 matched=yes <html>...
 all_matched no
 
 #### 検知有効時
 
 ~/Documents/Programming/school/web_programming/test | [0s]
 > python3 check_waf.py 192.168.64.4
-http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
-https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+http_root_ok expected=404 actual=404 matched=yes {"error":"not_found"}
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
 blocked_sqlmap_ua expected=403 actual=403 matched=yes <html>
 <head><title>403 Forbidden</title></head>
 <body>

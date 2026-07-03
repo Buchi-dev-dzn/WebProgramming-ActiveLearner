@@ -63,7 +63,7 @@ def fetch(url: str, timeout: float, headers: dict[str, str] | None = None) -> tu
 
 
 async def burst_once(target: str, port: int, timeout: float) -> int | str:
-    url = f"http://{target}:{port}/"
+    url = f"http://{target}:{port}/health"
     try:
         return await asyncio.to_thread(fetch, url, timeout)
     except Exception as exc:  # noqa: BLE001

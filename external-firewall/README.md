@@ -132,8 +132,8 @@ Client
   -> host published port 80/443
   -> external-firewall (nginx stream)
   -> reverse-proxy
-  -> application internal firewall
-  -> backend
+  -> internal-firewall
+  -> fastapi-app
   -> postgres
 ```
 
@@ -366,7 +366,7 @@ docker compose stop external-firewall
 
 観察できたこと:
 
-- `reverse-proxy`, `application`, `postgres` は起動したままだった
+- `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` は起動したままだった
 - それでも外部公開の最前段が止まるため、`80/443` は利用できなくなった
 - これは `reverse-proxy` を host に直接公開していない設計と整合する
 
@@ -396,7 +396,7 @@ docker compose up -d --force-recreate external-firewall
 
 - `external-firewall` の復旧により、外部入口が回復した
 - `External Firewall -> Reverse Proxy -> Application -> Backend -> Postgres` の本線が成立した
-- HTTP と HTTPS の両方で、入口から backend までの疎通を確認できた
+- HTTP と HTTPS の両方で、入口から FastAPI までの疎通を確認できた
 
 ## 報告書向けのまとめ
 
@@ -516,7 +516,7 @@ table inet codex_external_fw1 {
 
 - HTTP `200 OK`
 - HTTPS `200 OK`
-- backend の health JSON も正常応答
+- FastAPI の health JSON も正常応答
 
 ### 3. L4 到達性
 

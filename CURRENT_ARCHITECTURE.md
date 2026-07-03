@@ -31,13 +31,16 @@ graph TD
         RP[Reverse Proxy<br/>DMZ]
       end
 
-      subgraph Docker5[Docker 5: application]
+      subgraph Docker5[Docker 5: internal-firewall]
         FW2[Internal Firewall<br/>internal nginx]
-        APIGW[API Gateway<br/>planned split]
-        Back[Backend Application]
       end
 
-      subgraph Docker6[Docker 6: postgres]
+      subgraph Docker6[Docker 6: fastapi-app]
+        APIGW[API Gateway<br/>planned split]
+        Back[Backend Application<br/>FastAPI]
+      end
+
+      subgraph Docker7[Docker 7: postgres]
         DB[(Database)]
       end
     end
@@ -65,7 +68,7 @@ graph TD
 - `Host Published Ports 80 / 443`
   - Docker がホスト側で公開しているポートです
   - 今は `external-firewall` だけがホスト公開されています
-- `Docker 1` から `Docker 6`
+- `Docker 1` から `Docker 7`
   - 1 台の VM の中で、別サーバ相当の役割を Docker コンテナで分離しています
 
 ## 入口として外部公開されているのはどこか
@@ -78,7 +81,7 @@ graph TD
 - `192.168.64.4:80`
 - `192.168.64.4:443`
 
-`nips`, `waf`, `reverse-proxy`, `application`, `postgres` は Docker 内部ネットワーク上のノードであり、外部から直接到達させる設計にはしていません。
+`nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` は Docker 内部ネットワーク上のノードであり、外部から直接到達させる設計にはしていません。
 
 ## Docker 2 と Docker 3 は公開されているのか
 
@@ -112,7 +115,8 @@ Client
   -> nips
   -> waf
   -> reverse-proxy
-  -> application
+  -> internal-firewall
+  -> fastapi-app
   -> postgres
 ```
 
@@ -139,8 +143,8 @@ Client
   -> nips
   -> waf
   -> reverse-proxy
-  -> application internal nginx
-  -> backend application
+  -> internal-firewall
+  -> fastapi-app
   -> postgres
 ```
 
@@ -158,22 +162,25 @@ Client
 - `Docker 4: reverse-proxy`
   - `nginx`
   - DMZ 公開サーバ相当
-- `Docker 5: application`
-  - internal nginx と backend をまとめている段階
-  - 現時点では `Internal Firewall` と `Backend` を同一コンテナで再現
-- `Docker 6: postgres`
+- `Docker 5: internal-firewall`
+  - internal nginx
+  - `Reverse Proxy` 後段で `/api/` だけを FastAPI に流す
+- `Docker 6: fastapi-app`
+  - FastAPI
+  - PostgreSQL 依存を持つ内部 API
+- `Docker 7: postgres`
   - `PostgreSQL`
   - 最深部のデータ層
 
 ## まだ未実装だが想定しているもの
 
 - `API Gateway`
-  - 現在は `application` コンテナ内に未分離
+  - 現在は `fastapi-app` の前段に未分離
   - 将来的には独立コンテナ化して、認証認可や API 単位の制御を分離する
 - `NIDS`
   - 本線上ではなく、監視専用として横から観測する想定
 - `HIDS / HIPS`
-  - backend ホスト相当の監視・保護として追加する想定
+  - `fastapi-app` ホスト相当の監視・保護として追加する想定
 
 ## Docker に依存している部分
 
@@ -190,13 +197,13 @@ Client
 
 ## 本来の別サーバ構成とどこまで噛み合っているか
 
-この構成は、本来 `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Application`, `Database` が別々のサーバや別ネットワーク境界に置かれる設計を、1 台の Linux VM 上で擬似的に再現したものです。
+この構成は、本来 `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` が別々のサーバや別ネットワーク境界に置かれる設計を、1 台の Linux VM 上で擬似的に再現したものです。
 
 噛み合っている部分は次です。
 
 - 役割ごとに層を分離している
 - 外部公開する層を `external-firewall` に限定している
-- 通信経路を `external-firewall -> nips -> waf -> reverse-proxy -> application -> postgres` に段階化している
+- 通信経路を `external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall -> fastapi-app -> postgres` に段階化している
 - 「どこで止めるか」「どこから内側か」を説明できる
 
 一方で、完全には一致しない部分もあります。
@@ -229,7 +236,7 @@ Client
 - データ層
   - Database
 
-つまり本番では、今回の Docker 1 から Docker 6 に相当するものを、別々の物理サーバ、別 VM、または別ノード上に配置することが一般的です。
+つまり本番では、今回の Docker 1 から Docker 7 に相当するものを、別々の物理サーバ、別 VM、または別ノード上に配置することが一般的です。
 
 ### 2. NIC を複数持たせて境界を分ける
 
@@ -314,8 +321,10 @@ Client
   - DMZ 内または edge 側の Web 防御装置
 - `reverse-proxy`
   - DMZ 公開サーバ
-- `application`
-  - 内部 Application Zone
+- `internal-firewall`
+  - 内部境界
+- `fastapi-app`
+  - 内部 API
 - `postgres`
   - DB 専用セグメント
 
@@ -347,7 +356,8 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
   - `nips`
   - `waf`
   - `reverse-proxy`
-  - `application`
+  - `internal-firewall`
+  - `fastapi-app`
   - `postgres`
 
 です。
@@ -374,4 +384,4 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
 
 報告書では、次のように説明できます。
 
-今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `80/443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `application`, `postgres` へ順に流れる。未実装の `API Gateway`, `NIDS`, `HIDS/HIPS` は今後の拡張対象として位置づけている。
+今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `80/443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` へ順に流れる。未実装の `API Gateway`, `NIDS`, `HIDS/HIPS` は今後の拡張対象として位置づけている。

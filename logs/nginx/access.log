@@ -39508,3 +39508,8 @@
 172.26.0.3 - - [03/Jul/2026:00:43:05 +0000] "PUT / HTTP/1.1" 200 21 "-" "Python-urllib/3.14"
 172.26.0.3 - - [03/Jul/2026:00:44:02 +0000] "GET / HTTP/1.1" 200 21 "-" "Python-urllib/3.14"
 172.26.0.3 - - [03/Jul/2026:00:44:02 +0000] "GET /api/health HTTP/1.1" 200 88 "-" "Python-urllib/3.14"
+172.26.0.3 - - [03/Jul/2026:02:25:36 +0000] "GET /api/info HTTP/1.1" 200 301 host="127.0.0.1" req_id="7d910a2c1c7bf6bd1b3601e9c01e6705" upstream="172.23.0.3:80" upstream_status="200" req_time="0.028" upstream_time="0.029" "-" "curl/8.18.0"
+172.26.0.3 - - [03/Jul/2026:02:25:37 +0000] "GET /api/health HTTP/1.1" 200 125 host="127.0.0.1" req_id="fdc581624e8b892bf5e5343c19e59048" upstream="172.23.0.3:80" upstream_status="200" req_time="0.043" upstream_time="0.043" "-" "curl/8.18.0"
+172.26.0.3 - - [03/Jul/2026:02:27:08 +0000] "GET / HTTP/1.1" 404 21 host="127.0.0.1" req_id="0b207157cb8bdeec754c54ef4a177423" upstream="-" upstream_status="-" req_time="0.000" upstream_time="-" "-" "Python-urllib/3.14"
+172.26.0.3 - - [03/Jul/2026:02:27:08 +0000] "GET /api/health HTTP/1.1" 200 125 host="127.0.0.1" req_id="675f5675b48e24b641e07a1b8c187064" upstream="172.23.0.3:80" upstream_status="200" req_time="0.017" upstream_time="0.018" "-" "Python-urllib/3.14"
+172.26.0.3 - - [03/Jul/2026:02:27:09 +0000] "GET /api/health HTTP/1.1" 200 125 host="127.0.0.1" req_id="e19c5bd351bad093be7cad965b988fb1" upstream="172.23.0.3:80" upstream_status="200" req_time="0.002" upstream_time="0.002" "-" "Python-urllib/3.14"

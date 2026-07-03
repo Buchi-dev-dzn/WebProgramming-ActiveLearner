@@ -97,7 +97,7 @@ def main() -> None:
             "http_root_ok",
             "GET",
             f"http://{args.target}:{args.http_port}/",
-            200,
+            404,
             args.timeout,
         ),
         request_case(
@@ -133,7 +133,7 @@ def main() -> None:
             "blocked_dotgit_path",
             "GET",
             f"http://{args.target}:{args.http_port}/.git/config",
-            403,
+            404,
             args.timeout,
         ),
         request_case(

@@ -84,6 +84,6 @@ docker compose up -d --force-recreate nips
 
 ## 補足
 
-このテストは `NIPS` に特有なレート制御確認を主目的としているため、`sqlmap` や `XSS` のような Web 攻撃シグネチャ確認は `WAF` テスト側に分離している。
+このテストは `NIPS` に特有なレート制御確認を主目的としているため、`sqlmap` や `XSS` のような Web 攻撃シグネチャ確認は `WAF` テスト側に分離している。通常系の `/health` は、現在は `reverse-proxy` のヘルス応答を返す。
 
 詳細は [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md) を参照。

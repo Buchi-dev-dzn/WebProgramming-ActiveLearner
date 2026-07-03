@@ -13,13 +13,13 @@ Docker Compose を使って、公開用の DMZ、非公開の Application 層、
 
 - Docker Compose
 - Nginx
-- Node.js
+- Python / FastAPI
 - PostgreSQL
 
 ## 補足ドキュメント
 
 - [CURRENT_ARCHITECTURE.md](/home/buchi/WebProgramming-ActiveLearner/CURRENT_ARCHITECTURE.md)
-  - Linux VM の入口、Docker 1 から Docker 6 までの現在構成、および未実装の想定レイヤーを Mermaid で整理した図
+  - Linux VM の入口、Docker 1 から Docker 7 までの現在構成、および未実装の想定レイヤーを Mermaid で整理した図
   - 外部公開されているのはどこか、`external-firewall` から `nips` / `waf` にどう受け渡すか、本来の別サーバ構成とどこまで噛み合っているかも説明
 
 ## 最終的に目指す構成
@@ -106,7 +106,7 @@ end
   - 外部から直接触れさせず、内部経路だけで到達させる
 - `DB / Database`
   - 永続データを保持する最深部
-  - 原則として backend からのみ接続される
+  - 原則として FastAPI からのみ接続される
 - `NIDS`
   - 通信を監視する IDS
   - 本線上で転送を担うのではなく、横から観測して異常を検知する
@@ -153,9 +153,12 @@ end
 - `reverse-proxy` コンテナ
   - `RP / Reverse Proxy`
   - DMZ の公開サーバを擬似的に再現
-- `application` コンテナ
-  - `FW2 + API + Backend` の一部または全体を段階的に再現する層
-  - 現時点では内部 nginx を `FW2` 相当として使い、その後段で backend を動かしている
+- `internal-firewall` コンテナ
+  - `FW2 / Internal Firewall`
+  - `reverse-proxy` の後段で `/api/` だけを `fastapi-app` に流す
+- `fastapi-app` コンテナ
+  - `Backend Application`
+  - 業務 API と PostgreSQL ヘルスチェックを返す
 - `postgres` コンテナ
   - `DB / Database`
   - データ層を擬似的に分離
@@ -165,7 +168,7 @@ end
 - `WAF`
   - reverse proxy 前段または同層で再導入可能
 - `API Gateway`
-  - backend から独立させる候補
+  - `fastapi-app` から独立させる候補
 - `NIDS`, `HIDS/HIPS`
   - 通信本線ではなく監視レイヤーとして追加する候補
 
@@ -191,14 +194,15 @@ end
 - `reverse-proxy`
   - DMZ を模した公開サーバ
   - `waf` の後段で受ける
-  - `application` コンテナにだけ中継する
-- `application`
-  - 外部公開しない内部アプリ層
-  - コンテナ内 nginx が Internal Firewall として動く
-  - `/api/` だけを backend API に流す
+  - `internal-firewall` コンテナにだけ中継する
+- `internal-firewall`
+  - 外部公開しない内部境界
+  - `/api/` だけを `fastapi-app` に流す
+- `fastapi-app`
+  - 実際の API 応答と PostgreSQL 疎通確認を返す
 - `postgres`
   - データ保存先
-  - `application` からだけ参照される前提
+  - `fastapi-app` からだけ参照される前提
 
 ## 現在の実装範囲
 
@@ -214,12 +218,12 @@ end
   - Web アプリケーション向けの HTTP/HTTPS 詳細検査を行う
 - `reverse-proxy/`
   - DMZ に置く reverse proxy の設定
-- `application/`
-  - Internal Firewall 相当の nginx と起動設定
-- `backend/`
-  - Node.js の最小 API
+- `internal-firewall/`
+  - Internal Firewall 相当の nginx と Dockerfile
+- `fastapi/`
+  - FastAPI の API 実装
 - `logs/`
-  - external firewall / reverse proxy / application / postgres のログ保存先
+  - external firewall / reverse proxy / internal firewall / postgres のログ保存先
 
 ## 現在再現している段階
 
@@ -233,7 +237,7 @@ Client
   -> WAF
   -> Reverse Proxy
   -> Internal Firewall
-  -> Backend
+  -> FastAPI
   -> Database
 ```
 
@@ -290,7 +294,7 @@ docker compose up -d --build
 - `GET /health`
   - reverse proxy の生存確認
 - `GET /api/health`
-  - reverse proxy -> application -> backend -> postgres の疎通確認
+  - reverse proxy -> internal-firewall -> fastapi-app -> postgres の疎通確認
 - `GET /api/info`
   - 現在の構成情報を返す
 
@@ -319,7 +323,7 @@ curl -k -i https://127.0.0.1/api/health
 
 - 公開ポートは `external-firewall` だけに寄せる
 - `reverse-proxy` は DMZ の内部サーバとして外周入口の後段に置く
-- `application` と `postgres` は internal network に閉じる
+- `internal-firewall`, `fastapi-app`, `postgres` は internal network に閉じる
 - Docker 上で外周サーバー、DMZ、内部アプリ層、DB 層を段階的に分離する
 
 ## 今後の拡張候補

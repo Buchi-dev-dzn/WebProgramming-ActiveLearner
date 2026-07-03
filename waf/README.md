@@ -75,7 +75,7 @@ Client
 意味:
 
 - 不要な管理パス探索や未知エンドポイント探索を後段に流さない
-- `reverse-proxy` や `application` に届く前に到達面を絞れる
+- `reverse-proxy` や `internal-firewall` に届く前に到達面を絞れる
 - 「通す URL を列挙する」形なので、後から監査しやすい
 
 ### 2. path ベースの遮断を強化した
@@ -212,12 +212,12 @@ Client
   - `200 OK`
 - `http://127.0.0.1/`
   - `200 OK`
-  - body は `reverse-proxy active`
+  - body は `{"error":"not_found"}`
 
 意味:
 
 - `External Firewall -> NIPS -> WAF -> Reverse Proxy -> Application -> Backend` の本線が成立している
-- WAF を挟んでも正常トラフィックは backend まで通る
+- WAF を挟んでも正常トラフィックは FastAPI まで通る
 
 ### 遮断系
 
@@ -319,7 +319,7 @@ curl -i -X PUT http://127.0.0.1/
 
 そのため、今回の構成では次を確認できます。
 
-- 正常な Web リクエストも backend まで到達しなくなる
+- 正常な Web リクエストも FastAPI まで到達しなくなる
 - `WAF` が単なる後付けルールではなく、本線上の Web 向け検査・中継要素であることが分かる
 
 ### 検査だけを無効化して比較する方法
@@ -365,7 +365,7 @@ pass-through 比較では次も確認できます。
 ## 報告書向けのまとめ
 
 今回の WAF は、`NIPS` の後段で HTTP/HTTPS を詳細に検査する層として実装した。  
-実際に、正常な backend 向けリクエストは `200 OK` で通過しつつ、危険な User-Agent、XSS / SQLi を疑う query、非許可メソッドに対しては `403` または `405` を返すことを確認した。  
+実際に、正常な FastAPI 向けリクエストは `200 OK` で通過しつつ、危険な User-Agent、XSS / SQLi を疑う query、非許可メソッドに対しては `403` または `405` を返すことを確認した。  
 この結果から、`NIPS` を広域的な侵入防止層、`WAF` を Web アプリケーション通信に特化した詳細防御層として分離して説明できる。
 
 ## 注意

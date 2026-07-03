@@ -8,7 +8,7 @@
 - 想定 VM IP は `192.168.64.4`
 - Python 3.10 以上を利用する
 - HTTPS は自己署名証明書のため、スクリプト内で証明書検証を無効化している
-- 通常構成では `external-firewall -> nips -> waf -> reverse-proxy -> application -> backend` の本線が起動している前提
+- 通常構成では `external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall -> fastapi-app` の本線が起動している前提
 
 ## 何を検証するか
 
@@ -46,7 +46,7 @@ python3 other/test/waf/check_waf.py 192.168.64.4 --json
 ## 期待値
 
 - `GET /`
-  - `200`
+  - `404`
 - `GET /api/health` over HTTPS
   - `200`
 - `User-Agent: sqlmap`
@@ -88,8 +88,8 @@ python3 other/test/waf/check_waf.py 192.168.64.4 --json
 正常系の例:
 
 ```text
-http_root_ok expected=200 actual=200 matched=yes reverse-proxy active
-https_api_health_ok expected=200 actual=200 matched=yes {"service":"backend-api","status":"ok","checks":{"postgres":{"status":"ok"}}}
+http_root_ok expected=404 actual=404 matched=yes {"error":"not_found"}
+https_api_health_ok expected=200 actual=200 matched=yes {"service":"fastapi-api","status":"ok","checks":{"postgres":{"status":"ok"}},"request_id":"..."}
 ```
 
 遮断系の例:

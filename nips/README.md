@@ -267,9 +267,9 @@ Client
 ### 5. 問題がなければ WAF に渡す
 
 `NIPS` は最終到達点ではなく、中継しながら判定する層です。  
-異常が無い通信だけを backend に渡します。
+異常が無い通信だけを後段 API に渡します。
 
-現在の backend は次の 2 つです。
+現在の後段転送先は次の 2 つです。
 
 - `backend waf_http`
   - `server waf waf:80`
@@ -402,7 +402,7 @@ HTTP 側では、平文の HTTP リクエストに対して次のパターンを
 
 意味:
 
-- NIPS を経由しても正規トラフィックは backend まで通る
+- NIPS を経由しても正規トラフィックは FastAPI まで通る
 - `External Firewall -> NIPS -> WAF -> Reverse Proxy -> Application -> Backend` の本線が成立している
 
 ### 遮断系
@@ -557,6 +557,6 @@ pass-through NIPS:
 ## 報告書向けのまとめ
 
 今回の NIPS は、`HAProxy` を用いて `External Firewall` と `Reverse Proxy` の間に inline で配置した。  
-これにより、正常な HTTP/HTTPS トラフィックを backend まで通しつつ、危険な User-Agent や XSS / SQLi を疑う HTTP リクエストを `403` で遮断できることを確認した。  
+これにより、正常な HTTP/HTTPS トラフィックを FastAPI まで通しつつ、危険な User-Agent や XSS / SQLi を疑う HTTP リクエストを `403` で遮断できることを確認した。  
 また、443 番ポートでは TLS ClientHello の妥当性確認を行うことで、少なくとも暗号化セッション確立前の異常通信を拒否する基盤を持たせた。  
 一方で、HTTPS payload の深い L7 検査はまだ行っておらず、この部分は将来の WAF によって補完する想定である。

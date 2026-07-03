@@ -8,15 +8,15 @@
   - external firewall のアクセスログとエラーログ
 - `nginx/`
   - reverse proxy のアクセスログとエラーログ
-- `application/`
-  - internal firewall と backend API のログ
+- `internal-firewall/`
+  - internal firewall のアクセスログとエラーログ
 - `postgres/`
   - PostgreSQL 関連ログの保存先として確保
 
 ## 補足
 
-- `waf/`, `backend/` は旧構成のログ置き場として残しています
-- 現在の構成で主に使うのは `external-firewall/`, `nginx/`, `application/`, `postgres/` です
+- `application/`, `backend/` は旧構成のログ置き場として残しています
+- 現在の構成で主に使うのは `external-firewall/`, `nginx/`, `internal-firewall/`, `postgres/` です
 
 ## 目的
 
