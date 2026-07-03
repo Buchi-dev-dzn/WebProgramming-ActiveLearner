@@ -212,7 +212,7 @@ end
 - `waf/`
   - inline WAF の設定
   - Web アプリケーション向けの HTTP/HTTPS 詳細検査を行う
-- `nginx/`
+- `reverse-proxy/`
   - DMZ に置く reverse proxy の設定
 - `application/`
   - Internal Firewall 相当の nginx と起動設定
