@@ -84,3 +84,39 @@ PostgreSQL 停止時:
   - 後段アプリケーションの取り違えを疑う
 - PostgreSQL 停止時でも `/api/health` が `200`
   - ヘルスチェックや DB 接続の扱い漏れを疑う
+
+## 検証結果メモ
+
+2026-07-10 に `127.0.0.1` の公開入口経由で確認しました。
+
+実行コマンド:
+
+```bash
+python3 other/test/fastapi/check_fastapi.py 127.0.0.1
+```
+
+確認できたこと:
+
+- `GET /api/health` は `200` を返し、PostgreSQL check は `ok`
+- `GET /api/info` は `service=fastapi-api` と DB 接続方針を返す
+- `POST /api/products` は商品を PostgreSQL に作成できる
+- `GET /api/product?sku=...` は作成した商品を取得できる
+- `POST /api/product/stock` は在庫数を更新できる
+- `GET /api/products` は作成済み商品一覧を返す
+- 存在しない SKU は `404` を返す
+- `X-Request-Id` は reverse proxy から FastAPI レスポンス本文まで伝播する
+
+結果:
+
+```text
+health_shape_ok yes
+info_shape_ok yes
+request_id_propagated yes
+product_shape_ok yes
+all_matched yes
+```
+
+補足:
+
+- この検証は外部公開入口から `external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall -> fastapi-app -> postgres` を通る経路で実施した
+- Codex 実行環境からは Docker API への `docker compose ps` が permission denied になったため、コンテナ一覧ではなく HTTP/API 応答で稼働を確認した

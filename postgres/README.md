@@ -31,7 +31,7 @@ docker compose up -d --build
 既存データを残す場合は、`postgres` コンテナ内で SQL を手動適用します。
 
 ```bash
-docker compose exec -T postgres psql -U app_user -d app_db < postgres/init/001_products.sql
+docker compose exec -T postgres psql -U postgres -d app_db < postgres/init/001_products.sql
 ```
 
 ## アクセス境界

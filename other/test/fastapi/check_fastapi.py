@@ -60,10 +60,10 @@ def open_request(
             timeout=timeout,
             context=build_ssl_context(),
         ) as response:
-            body = response.read(400).decode("utf-8", errors="replace").strip()
+            body = response.read(4000).decode("utf-8", errors="replace").strip()
             return response.getcode(), body, dict(response.headers.items())
     except urllib.error.HTTPError as exc:
-        body = exc.read(400).decode("utf-8", errors="replace").strip()
+        body = exc.read(4000).decode("utf-8", errors="replace").strip()
         return exc.code, body, dict(exc.headers.items())
     except Exception as exc:  # noqa: BLE001
         return None, f"error:{type(exc).__name__}", {}
