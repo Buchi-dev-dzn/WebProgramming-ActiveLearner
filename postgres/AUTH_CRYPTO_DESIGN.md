@@ -111,7 +111,7 @@ email_lookup_hash = HMAC-SHA-256(EMAIL_LOOKUP_KEY, normalized_email)
 
 ## 想定する DB テーブル
 
-将来的に `users` テーブルを追加します。
+`users` テーブルを追加します。
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
@@ -382,6 +382,17 @@ audit_events
 7. `audit_events`
 
 現在の `products` テーブルは学習用の最小実装です。将来的には、`seller_id`, `title`, `description`, `currency`, `status`, `category_id` などを持つ出品向けテーブルへ拡張します。
+
+今回の基礎実装では、まず次を DB と API に反映します。
+
+- `users`
+- `seller_profiles`
+- `audit_events`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/seller/profile`
+- `GET /api/seller/profile`
 
 ## データ保護レベルの整理
 

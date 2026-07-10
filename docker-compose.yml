@@ -74,6 +74,9 @@ services:
       dockerfile: fastapi/Dockerfile
     environment:
       DATABASE_URL: "postgresql://app_user:app_password@postgres:5432/app_db"
+      JWT_SECRET_KEY_B64: "yZgC+H8/qddXnBGJK9JPMWlX9Q7a2ZeRYbgMC84AS0U="
+      DATA_ENCRYPTION_KEY_B64: "dwRZKYwS/C7pjAsT5hTxTEeBvt5xY3BmAezwguX1xIo="
+      EMAIL_LOOKUP_KEY_B64: "H2nQK3mmpz5gZTS3M0Yp5JUoNCapunuPabaB/cyd0F4="
     depends_on:
       - postgres
     expose:

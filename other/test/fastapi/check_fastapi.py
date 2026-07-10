@@ -47,13 +47,19 @@ def open_request(
     timeout: float,
     method: str = "GET",
     payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int | None, str, dict[str, str]]:
     body = None
-    headers = {}
+    request_headers = dict(headers or {})
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, method=method, data=body, headers=headers)
+        request_headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        url,
+        method=method,
+        data=body,
+        headers=request_headers,
+    )
     try:
         with urllib.request.urlopen(
             request,
@@ -89,8 +95,15 @@ def request_json_case(
     expected: int,
     timeout: float,
     payload: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> CaseResult:
-    status, body, _headers = open_request(url, timeout, method=method, payload=payload)
+    status, body, _headers = open_request(
+        url,
+        timeout,
+        method=method,
+        payload=payload,
+        headers=headers,
+    )
     return CaseResult(
         name=name,
         method=method,
@@ -107,7 +120,10 @@ def main() -> None:
     health_expected = 503 if args.expect_degraded_health else 200
     timeout = max(args.timeout, 8.0) if args.expect_degraded_health else args.timeout
     product_shape_ok = True
+    auth_shape_ok = True
     product_sku = f"codex-{uuid.uuid4().hex[:12]}"
+    user_email = f"codex-{uuid.uuid4().hex[:12]}@example.test"
+    user_password = "Codex-Password-12345"
 
     cases = [
         request_case(
@@ -183,6 +199,84 @@ def main() -> None:
         except json.JSONDecodeError:
             product_shape_ok = False
 
+        auth_register_case = request_json_case(
+            "auth_register_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/auth/register",
+            201,
+            timeout,
+            {
+                "email": user_email,
+                "password": user_password,
+                "role": "seller",
+            },
+        )
+        auth_login_case = request_json_case(
+            "auth_login_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/auth/login",
+            200,
+            timeout,
+            {
+                "email": user_email,
+                "password": user_password,
+            },
+        )
+        cases.extend([auth_register_case, auth_login_case])
+
+        try:
+            register_payload = json.loads(auth_register_case.detail)
+            login_payload = json.loads(auth_login_case.detail)
+            token = login_payload.get("access_token")
+            auth_headers = {"Authorization": f"Bearer {token}"}
+            auth_me_case = request_json_case(
+                "auth_me_status",
+                "GET",
+                f"https://{args.target}:{args.https_port}/api/auth/me",
+                200,
+                timeout,
+                headers=auth_headers,
+            )
+            seller_upsert_case = request_json_case(
+                "seller_profile_upsert_status",
+                "POST",
+                f"https://{args.target}:{args.https_port}/api/seller/profile",
+                200,
+                timeout,
+                {
+                    "store_name": "Codex Test Store",
+                    "store_description": "Created by automated test",
+                    "business_email": user_email,
+                    "phone": "+1-555-0100",
+                    "business_address": "1 Test Street",
+                    "payout_account_token": "test_payout_token",
+                },
+                headers=auth_headers,
+            )
+            seller_get_case = request_json_case(
+                "seller_profile_get_status",
+                "GET",
+                f"https://{args.target}:{args.https_port}/api/seller/profile",
+                200,
+                timeout,
+                headers=auth_headers,
+            )
+            cases.extend([auth_me_case, seller_upsert_case, seller_get_case])
+
+            me_payload = json.loads(auth_me_case.detail)
+            seller_payload = json.loads(seller_get_case.detail)
+            auth_shape_ok = (
+                register_payload.get("user", {}).get("email") == user_email
+                and register_payload.get("user", {}).get("role") == "seller"
+                and isinstance(token, str)
+                and bool(token)
+                and me_payload.get("user", {}).get("email") == user_email
+                and seller_payload.get("seller_profile", {}).get("store_name")
+                == "Codex Test Store"
+            )
+        except (json.JSONDecodeError, AttributeError):
+            auth_shape_ok = False
+
     health_status, health_body, health_headers = open_request(
         f"https://{args.target}:{args.https_port}/api/health",
         timeout,
@@ -238,12 +332,14 @@ def main() -> None:
         and health_shape_ok
         and info_shape_ok
         and request_id_ok
-        and product_shape_ok,
+        and product_shape_ok
+        and auth_shape_ok,
         "expect_degraded_health": args.expect_degraded_health,
         "health_shape_ok": health_shape_ok,
         "info_shape_ok": info_shape_ok,
         "request_id_matched": request_id_ok,
         "product_shape_ok": product_shape_ok,
+        "auth_shape_ok": auth_shape_ok,
         "cases": [asdict(case) for case in cases],
     }
 
@@ -263,6 +359,7 @@ def main() -> None:
     print("info_shape_ok", "yes" if info_shape_ok else "no")
     print("request_id_propagated", "yes" if request_id_ok else "no")
     print("product_shape_ok", "yes" if product_shape_ok else "no")
+    print("auth_shape_ok", "yes" if auth_shape_ok else "no")
     print("all_matched", "yes" if result["all_matched"] else "no")
 
 

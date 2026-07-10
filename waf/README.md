@@ -67,6 +67,19 @@ Client
 - `HEAD /api/health`
 - `GET /api/info`
 - `HEAD /api/info`
+- `GET /api/products`
+- `HEAD /api/products`
+- `POST /api/products`
+- `GET /api/product`
+- `HEAD /api/product`
+- `POST /api/product/stock`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `HEAD /api/auth/me`
+- `GET /api/seller/profile`
+- `HEAD /api/seller/profile`
+- `POST /api/seller/profile`
 - `POST /api/health`
 - `POST /api/info`
 
@@ -77,6 +90,23 @@ Client
 - 不要な管理パス探索や未知エンドポイント探索を後段に流さない
 - `reverse-proxy` や `internal-firewall` に届く前に到達面を絞れる
 - 「通す URL を列挙する」形なので、後から監査しやすい
+
+今回追加した認証・出品者プロフィール系ルートの意味:
+
+- `/api/auth/register`
+  - ユーザー登録の入口
+  - email は後段 FastAPI で暗号化され、password は password hash として保存される
+- `/api/auth/login`
+  - ログインの入口
+  - WAF はルート到達だけを許可し、認証判定は FastAPI が行う
+- `/api/auth/me`
+  - Bearer token 確認用
+  - token の妥当性や権限判定は FastAPI が行う
+- `/api/seller/profile`
+  - 出品者プロフィールの作成・取得用
+  - 事業者メール、電話番号、住所などは後段 FastAPI で暗号化される
+
+WAF は暗号化や password hash そのものは担当しない。WAF の役割は、認証 API と出品者プロフィール API への到達面を必要な HTTP method と path に限定すること。
 
 ### 2. path ベースの遮断を強化した
 
@@ -163,6 +193,13 @@ Client
   - `/`
   - `/api/health`
   - `/api/info`
+  - `/api/products`
+  - `/api/product`
+  - `/api/product/stock`
+  - `/api/auth/register`
+  - `/api/auth/login`
+  - `/api/auth/me`
+  - `/api/seller/profile`
 
 意味:
 
@@ -191,6 +228,31 @@ Client
 - URL override を狙う不審ヘッダ
 - 未許可ルートへの探索
 - 過大な request body
+
+## 認証・出品 API 追加時の WAF の意味
+
+今回の FastAPI 側の拡張により、ログイン・JWT・出品者プロフィールの API が増えました。
+
+WAF 側で追加したのは、これらの API を無条件に広く開けることではなく、次の条件だけを通すことです。
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+GET  /api/auth/me
+POST /api/seller/profile
+GET  /api/seller/profile
+```
+
+これにより、例えば次のような未知ルートは後段へ渡しません。
+
+```text
+/api/auth/admin
+/api/auth/debug
+/api/seller/delete
+/api/seller/internal
+```
+
+認証情報や個人情報の保護は FastAPI と PostgreSQL の責務ですが、WAF はその前段で「そもそも想定していない URL を通さない」役割を持ちます。
 
 ## 実測で確認したいこと
 

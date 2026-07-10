@@ -10,6 +10,10 @@
 - `/api/products` で PostgreSQL に商品を作成できるか
 - `/api/product?sku=...` で作成済み商品を取得できるか
 - `/api/product/stock` で在庫更新ができるか
+- `/api/auth/register` で seller ユーザーを登録できるか
+- `/api/auth/login` で JWT を取得できるか
+- `/api/auth/me` で Bearer token からユーザー情報を取得できるか
+- `/api/seller/profile` で出品者プロフィールを作成・取得できるか
 - PostgreSQL 停止時に `/api/health` が `503` / `status=degraded` を返すか
   - 現行チェーンでは `503 {"error":"upstream_unavailable"}` に正規化される場合も許容する
 
@@ -61,6 +65,21 @@ docker compose start postgres
 - `POST /api/product/stock`
   - `200`
   - 更新後の `stock` を返す
+- `POST /api/auth/register`
+  - `201`
+  - 登録した `email` と `role=seller` を返す
+- `POST /api/auth/login`
+  - `200`
+  - `access_token` を返す
+- `GET /api/auth/me`
+  - `200`
+  - Bearer token に紐づくユーザーを返す
+- `POST /api/seller/profile`
+  - `200`
+  - 出品者プロフィールを作成または更新する
+- `GET /api/seller/profile`
+  - `200`
+  - 作成済み出品者プロフィールを返す
 
 PostgreSQL 停止時:
 
@@ -113,6 +132,7 @@ health_shape_ok yes
 info_shape_ok yes
 request_id_propagated yes
 product_shape_ok yes
+auth_shape_ok yes
 all_matched yes
 ```
 

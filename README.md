@@ -21,6 +21,8 @@ Docker Compose を使って、公開用の DMZ、非公開の Application 層、
 - [CURRENT_ARCHITECTURE.md](/home/buchi/WebProgramming-ActiveLearner/CURRENT_ARCHITECTURE.md)
   - Linux VM の入口、Docker 1 から Docker 7 までの現在構成、および未実装の想定レイヤーを Mermaid で整理した図
   - 外部公開されているのはどこか、`external-firewall` から `nips` / `waf` にどう受け渡すか、本来の別サーバ構成とどこまで噛み合っているかも説明
+- [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md)
+  - CRYPTREC 暗号リストを参考にした password hash、個人情報暗号化、HMAC blind index、JWT、Marketplace 向け保存情報の設計メモ
 
 ## 最終的に目指す構成
 
