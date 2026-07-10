@@ -7,6 +7,9 @@
 - `/api/health` が PostgreSQL 正常時に `200` / `status=ok` を返すか
 - `/api/info` が FastAPI の構成情報を返すか
 - `request_id` がヘッダ伝播結果として本文に含まれるか
+- `/api/products` で PostgreSQL に商品を作成できるか
+- `/api/product?sku=...` で作成済み商品を取得できるか
+- `/api/product/stock` で在庫更新ができるか
 - PostgreSQL 停止時に `/api/health` が `503` / `status=degraded` を返すか
   - 現行チェーンでは `503 {"error":"upstream_unavailable"}` に正規化される場合も許容する
 
@@ -49,6 +52,16 @@ docker compose start postgres
   - `service=fastapi-api`
   - `dependencies=["postgres"]`
   - `request_id` を含む
+- `POST /api/products`
+  - `201`
+  - 作成した `sku` を返す
+- `GET /api/product?sku=...`
+  - `200`
+  - 作成した商品を返す
+- `POST /api/product/stock`
+  - `200`
+  - 更新後の `stock` を返す
+
 PostgreSQL 停止時:
 
 - `GET /api/health`
@@ -59,6 +72,7 @@ PostgreSQL 停止時:
 
 - 通常時
   - FastAPI は後段 API として正常な JSON を返す
+  - SQL 操作は FastAPI 経由でだけ観測する
 - PostgreSQL 停止時
   - FastAPI 自体は生きているが、依存障害は公開チェーン上で `503` として観測できる
 - fastapi-app 停止時

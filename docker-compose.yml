@@ -87,10 +87,11 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: app_db
-      POSTGRES_USER: app_user
-      POSTGRES_PASSWORD: app_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_admin_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - ./logs/postgres:/var/log/postgresql
     expose:
       - "5432"

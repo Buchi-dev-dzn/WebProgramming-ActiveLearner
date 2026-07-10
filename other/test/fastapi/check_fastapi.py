@@ -4,6 +4,7 @@ import json
 import ssl
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import asdict, dataclass
 
 
@@ -41,8 +42,18 @@ def build_ssl_context() -> ssl.SSLContext:
     return context
 
 
-def open_request(url: str, timeout: float) -> tuple[int | None, str, dict[str, str]]:
-    request = urllib.request.Request(url, method="GET")
+def open_request(
+    url: str,
+    timeout: float,
+    method: str = "GET",
+    payload: dict[str, object] | None = None,
+) -> tuple[int | None, str, dict[str, str]]:
+    body = None
+    headers = {}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, method=method, data=body, headers=headers)
     try:
         with urllib.request.urlopen(
             request,
@@ -71,10 +82,32 @@ def request_case(name: str, url: str, expected: int, timeout: float) -> CaseResu
     )
 
 
+def request_json_case(
+    name: str,
+    method: str,
+    url: str,
+    expected: int,
+    timeout: float,
+    payload: dict[str, object] | None = None,
+) -> CaseResult:
+    status, body, _headers = open_request(url, timeout, method=method, payload=payload)
+    return CaseResult(
+        name=name,
+        method=method,
+        url=url,
+        status=status,
+        expected=expected,
+        matched=(status == expected),
+        detail=body,
+    )
+
+
 def main() -> None:
     args = parse_args()
     health_expected = 503 if args.expect_degraded_health else 200
     timeout = max(args.timeout, 8.0) if args.expect_degraded_health else args.timeout
+    product_shape_ok = True
+    product_sku = f"codex-{uuid.uuid4().hex[:12]}"
 
     cases = [
         request_case(
@@ -90,6 +123,65 @@ def main() -> None:
             timeout,
         ),
     ]
+
+    if not args.expect_degraded_health:
+        create_case = request_json_case(
+            "product_create_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/products",
+            201,
+            timeout,
+            {
+                "sku": product_sku,
+                "name": "Codex Test Product",
+                "price_cents": 1299,
+                "stock": 7,
+            },
+        )
+        get_case = request_case(
+            "product_get_status",
+            f"https://{args.target}:{args.https_port}/api/product?sku={product_sku}",
+            200,
+            timeout,
+        )
+        stock_case = request_json_case(
+            "product_stock_update_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/product/stock",
+            200,
+            timeout,
+            {
+                "sku": product_sku,
+                "stock": 3,
+            },
+        )
+        list_case = request_case(
+            "product_list_status",
+            f"https://{args.target}:{args.https_port}/api/products?limit=5",
+            200,
+            timeout,
+        )
+        missing_case = request_case(
+            "product_missing_status",
+            f"https://{args.target}:{args.https_port}/api/product?sku=missing-{product_sku}",
+            404,
+            timeout,
+        )
+        cases.extend([create_case, get_case, stock_case, list_case, missing_case])
+
+        try:
+            created_payload = json.loads(create_case.detail)
+            fetched_payload = json.loads(get_case.detail)
+            stock_payload = json.loads(stock_case.detail)
+            list_payload = json.loads(list_case.detail)
+            product_shape_ok = (
+                created_payload.get("item", {}).get("sku") == product_sku
+                and fetched_payload.get("item", {}).get("sku") == product_sku
+                and stock_payload.get("item", {}).get("stock") == 3
+                and isinstance(list_payload.get("items"), list)
+            )
+        except json.JSONDecodeError:
+            product_shape_ok = False
 
     health_status, health_body, health_headers = open_request(
         f"https://{args.target}:{args.https_port}/api/health",
@@ -145,11 +237,13 @@ def main() -> None:
         "all_matched": all(case.matched for case in cases)
         and health_shape_ok
         and info_shape_ok
-        and request_id_ok,
+        and request_id_ok
+        and product_shape_ok,
         "expect_degraded_health": args.expect_degraded_health,
         "health_shape_ok": health_shape_ok,
         "info_shape_ok": info_shape_ok,
         "request_id_matched": request_id_ok,
+        "product_shape_ok": product_shape_ok,
         "cases": [asdict(case) for case in cases],
     }
 
@@ -168,6 +262,7 @@ def main() -> None:
     print("health_shape_ok", "yes" if health_shape_ok else "no")
     print("info_shape_ok", "yes" if info_shape_ok else "no")
     print("request_id_propagated", "yes" if request_id_ok else "no")
+    print("product_shape_ok", "yes" if product_shape_ok else "no")
     print("all_matched", "yes" if result["all_matched"] else "no")
 
 
