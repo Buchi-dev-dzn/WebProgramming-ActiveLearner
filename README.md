@@ -160,15 +160,13 @@ end
   - `reverse-proxy` の後段で `/api/` だけを `fastapi-app` に流す
 - `fastapi-app` コンテナ
   - `Backend Application`
-  - 業務 API と PostgreSQL ヘルスチェックを返す
+  - 商品 API、認証 API、出品者プロフィール API、PostgreSQL ヘルスチェックを返す
 - `postgres` コンテナ
   - `DB / Database`
-  - データ層を擬似的に分離
+  - 商品、認証、出品者プロフィール、監査イベントのデータ層を擬似的に分離
 
 まだ独立していない要素は、今後必要に応じて分離します。
 
-- `WAF`
-  - reverse proxy 前段または同層で再導入可能
 - `API Gateway`
   - `fastapi-app` から独立させる候補
 - `NIDS`, `HIDS/HIPS`
@@ -201,7 +199,7 @@ end
   - 外部公開しない内部境界
   - `/api/` だけを `fastapi-app` に流す
 - `fastapi-app`
-  - 実際の API 応答と PostgreSQL 疎通確認を返す
+  - 商品 API、認証 API、JWT、出品者プロフィール API、PostgreSQL 疎通確認を返す
 - `postgres`
   - データ保存先
   - `fastapi-app` からだけ参照される前提
@@ -224,6 +222,10 @@ end
   - Internal Firewall 相当の nginx と Dockerfile
 - `fastapi/`
   - FastAPI の API 実装
+  - 商品 API、認証 API、JWT、出品者プロフィール API を含む
+- `postgres/`
+  - PostgreSQL の初期化 SQL、認証・暗号化設計メモ
+  - `products`, `users`, `seller_profiles`, `audit_events` を管理する
 - `logs/`
   - external firewall / reverse proxy / internal firewall / postgres のログ保存先
 
@@ -272,18 +274,18 @@ Client
 - `NIDS`
 - `HIDS/HIPS`
 
-## 旧構成の扱い
+## 現時点で未実装の扱い
 
-以下は現行 Compose の直列構成には入っていません。
+現行 Compose の直列構成には、`nips` と `waf` はすでに本線として入っています。  
+まだ独立コンテナとして入っていないのは次です。
 
-- `waf/`
-  - 現在の inline WAF 設定
-  - TLS 終端と Web 向け詳細検査を担う
-- `nips/`
-  - NIPS の設定と設計メモ
-  - L3 から L7 までを総合的に見て遮断する inline 層
-- `nids-hids/`
-  - 監視系の構成メモ
+- `API Gateway`
+  - 現在は `fastapi-app` 内で API を直接提供している
+  - 将来的に認証認可、API versioning、API 単位の rate limit を分離する候補
+- `NIDS`
+  - 通信本線ではなく、横から観測する監視レイヤーとして追加する候補
+- `HIDS/HIPS`
+  - `fastapi-app` やホスト相当の監視・保護として追加する候補
 
 ## 起動
 
@@ -299,6 +301,14 @@ docker compose up -d --build
   - reverse proxy -> internal-firewall -> fastapi-app -> postgres の疎通確認
 - `GET /api/info`
   - 現在の構成情報を返す
+- `POST /api/auth/register`
+  - seller/customer ユーザー登録
+- `POST /api/auth/login`
+  - JWT 発行
+- `GET /api/auth/me`
+  - Bearer token によるユーザー確認
+- `POST /api/seller/profile`
+  - 出品者プロフィール作成・更新
 
 ```bash
 curl -i http://127.0.0.1/health
@@ -318,6 +328,8 @@ curl -k -i https://127.0.0.1/api/health
 - `nips` 追加後も正常な HTTP/HTTPS 疎通は維持された
 - `waf` 追加後も正常な HTTP/HTTPS 疎通は維持された
 - `waf` は危険な User-Agent、XSS / SQLi 風 query、非許可メソッドを `403/405` で遮断した
+- 認証 API、JWT、出品者プロフィール API は公開入口経由で正常に動作した
+- DB 内部検証で、平文 email/password が保存されていないことを確認した
 
 詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1), [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md:1), [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md:1) を参照してください。
 
@@ -330,6 +342,93 @@ curl -k -i https://127.0.0.1/api/health
 
 ## 今後の拡張候補
 
-- WAF を `external-firewall` と `reverse-proxy` の間または前後に再導入する
-- host / cloud 側の本来の External Firewall を別レイヤーとして補完する
+- API Gateway を `fastapi-app` から独立させる
 - NIDS / HIDS を監視系として追加する
+- host / cloud 側の本来の External Firewall を別レイヤーとして補完する
+- Marketplace 機能として注文、決済参照、配送、レビュー、監査ログを拡張する
+- Compose の開発用暗号鍵を secrets manager 相当へ移す
+
+## 現在地点の引き継ぎメモ
+
+2026-07-10 時点では、単なる三層構成の確認から一歩進み、EC / Marketplace 系バックエンドの基礎まで実装しています。
+
+現在の本線:
+
+```text
+Client
+  -> external-firewall
+  -> nips
+  -> waf
+  -> reverse-proxy
+  -> internal-firewall
+  -> fastapi-app
+  -> postgres
+```
+
+現在実装済みの主な API:
+
+- 商品 API
+  - `GET /api/products`
+  - `POST /api/products`
+  - `GET /api/product?sku=...`
+  - `POST /api/product/stock`
+- 認証 API
+  - `POST /api/auth/register`
+  - `POST /api/auth/login`
+  - `GET /api/auth/me`
+- 出品者プロフィール API
+  - `POST /api/seller/profile`
+  - `GET /api/seller/profile`
+
+現在の DB:
+
+- `products`
+- `users`
+- `seller_profiles`
+- `audit_events`
+
+認証・暗号化の現在方針:
+
+- password は復号可能な暗号化ではなく、`PBKDF2-HMAC-SHA-256` で hash 保存する
+- email や出品者連絡先は `AES-256-GCM` で暗号化する
+- email / phone の検索には `HMAC-SHA-256` の blind index を使う
+- JWT は現段階では access token のみ
+- カード番号や CVV は DB に保存しない方針
+
+検証済み:
+
+- 外部公開入口から FastAPI / PostgreSQL まで疎通する
+- 商品 API の作成・取得・在庫更新が動作する
+- seller ユーザー登録が動作する
+- email 重複登録は `409` で拒否される
+- 誤 password は `401` で拒否される
+- login で JWT が発行される
+- Bearer token 付き `/api/auth/me` が動作する
+- token なし `/api/auth/me` は `401` になる
+- seller profile の作成・取得が動作する
+- DB 内部検証で、平文 email/password が保存されていないことを確認済み
+
+認証・暗号化の検証結果は [other/test/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/README.md) と [other/test/auth-crypto/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/auth-crypto/README.md) に記録しています。  
+暗号化設計の考え方は [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) にまとめています。
+
+次に進めるなら、優先度は次の順が自然です。
+
+1. 認証基盤の強化
+   - refresh token
+   - password reset
+   - login attempt / account lockout
+   - key rotation
+2. Marketplace 機能の拡張
+   - seller と product の関連付け
+   - order / order_items
+   - payment provider 参照
+   - shipment
+   - review
+3. 監視・防御レイヤーの追加
+   - NIDS
+   - HIDS / HIPS
+   - audit_events の活用
+4. 本番化に近づける整理
+   - Compose environment の開発用鍵を secrets manager 相当へ移す
+   - API Gateway を独立させる
+   - 検証スクリプトを一括実行できる形にする

@@ -39667,3 +39667,4 @@
 172.19.0.4 - - [10/Jul/2026:02:24:01 +0000] "GET /api/auth/me HTTP/1.1" 401 36 "-" "Python-urllib/3.14"
 172.19.0.4 - - [10/Jul/2026:02:24:01 +0000] "POST /api/seller/profile HTTP/1.1" 200 462 "-" "Python-urllib/3.14"
 172.19.0.4 - - [10/Jul/2026:02:24:01 +0000] "GET /api/seller/profile HTTP/1.1" 200 462 "-" "Python-urllib/3.14"
+172.19.0.4 - - [10/Jul/2026:02:34:35 +0000] "GET /api/info HTTP/1.1" 200 589 "-" "curl/8.18.0"
