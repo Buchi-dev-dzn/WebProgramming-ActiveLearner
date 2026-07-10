@@ -82,11 +82,11 @@ location /api/ {
 
 ## Internal Firewall の役割
 
-`internal-firewall/conf.d/default.conf` では、後段の FastAPI を `fastapi-app:8000` として定義しています。
+`internal-firewall/conf.d/default.conf` では、後段の FastAPI を `172.31.0.20:8000` として定義しています。このIPは `api_net` 上の `fastapi-app` に割り当てています。
 
 ```nginx
 upstream fastapi_upstream {
-  server fastapi-app:8000;
+  server 172.31.0.20:8000;
 }
 ```
 
@@ -99,6 +99,30 @@ location /api/ {
 ```
 
 それ以外のパスは `403` を返すため、RPを通過したあとも内部境界で公開範囲を絞っています。
+
+加えて、`app_net` 上の `reverse-proxy` には固定IP `172.30.0.10` を割り当て、`internal-firewall` 側ではこのIPだけを許可しています。
+
+```nginx
+allow 172.30.0.10;
+deny all;
+```
+
+これにより、送信元は `reverse-proxy` のみに絞られます。将来 `app_net` に別コンテナが追加されても、明示的に許可しない限り `internal-firewall` へ入れません。
+
+送信先も `fastapi-app:8000` の単一 upstream に固定しているため、Internal Firewall のホワイトリストは次の形になります。
+
+```text
+許可する送信元:
+  reverse-proxy on app_net
+  172.30.0.10
+
+許可する送信先:
+  fastapi-app:8000 on api_net
+  172.31.0.20:8000
+
+許可するHTTPパス:
+  /api/
+```
 
 ## 実測確認結果
 

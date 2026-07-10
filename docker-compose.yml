@@ -49,8 +49,9 @@ services:
     depends_on:
       - internal-firewall
     networks:
-      - edge_net
-      - app_net
+      edge_net:
+      app_net:
+        ipv4_address: 172.30.0.10
     restart: unless-stopped
 
   internal-firewall:
@@ -64,8 +65,10 @@ services:
     expose:
       - "80"
     networks:
-      - app_net
-      - api_net
+      app_net:
+        ipv4_address: 172.30.0.20
+      api_net:
+        ipv4_address: 172.31.0.10
     restart: unless-stopped
 
   fastapi-app:
@@ -82,8 +85,9 @@ services:
     expose:
       - "8000"
     networks:
-      - api_net
-      - db_net
+      api_net:
+        ipv4_address: 172.31.0.20
+      db_net:
     restart: unless-stopped
 
   postgres:
@@ -111,9 +115,15 @@ networks:
   app_net:
     driver: bridge
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
   api_net:
     driver: bridge
     internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
   db_net:
     driver: bridge
     internal: true
