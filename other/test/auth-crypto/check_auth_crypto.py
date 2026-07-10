@@ -290,6 +290,18 @@ def main() -> None:
         "email": email,
         "cases": [asdict(case) for case in cases],
     }
+    nginx_404_count = sum(
+        1
+        for case in cases
+        if "404 Not Found" in case.detail and "<center>nginx</center>" in case.detail
+    )
+    if nginx_404_count >= 4:
+        result["diagnostic"] = (
+            "Most auth requests returned nginx HTML 404. "
+            "The running WAF container likely has not loaded the updated allowlist "
+            "for /api/auth/* and /api/seller/profile, or the request is reaching "
+            "a different host than the updated Compose stack."
+        )
 
     if args.json:
         print(json.dumps(result, ensure_ascii=True, indent=2))
@@ -302,6 +314,8 @@ def main() -> None:
             f"matched={'yes' if case.matched else 'no'}",
             case.detail,
         )
+    if "diagnostic" in result:
+        print("diagnostic", result["diagnostic"])
     print("all_matched", "yes" if result["all_matched"] else "no")
 
 

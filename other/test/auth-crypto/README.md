@@ -70,3 +70,43 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compo
 - `--check-db` は `docker compose exec postgres` を使うため、Docker API にアクセスできる環境で実行してください
 - HTTPS は自己署名証明書のため、スクリプト内で証明書検証を無効化しています
 - DB 保存確認は最低限の平文混入チェックです。暗号強度の証明ではなく、保存方針の実装ミスを見つけるための検査です
+
+## よくある失敗
+
+### すべて nginx の HTML 404 になる
+
+例:
+
+```text
+<html>
+<head><title>404 Not Found</title></head>
+...
+<center>nginx</center>
+```
+
+この場合、FastAPI の認証 API まで届いていません。多くの場合、稼働中の `waf` コンテナが古い設定のままで、`/api/auth/register`, `/api/auth/login`, `/api/auth/me`, `/api/seller/profile` を許可していません。
+
+Linux VM 側で次を実行します。
+
+```bash
+cd /home/buchi/WebProgramming-ActiveLearner
+docker compose up -d --build --force-recreate fastapi-app waf
+docker compose exec -T postgres psql -U postgres -d app_db < postgres/init/001_products.sql
+```
+
+既存 DB が過去の `app_user` 管理ユーザーで作成されている場合は、存在する管理ユーザーで SQL を適用してください。
+
+反映確認:
+
+```bash
+docker compose exec waf nginx -T | grep -E 'api/auth|api/seller'
+curl -k -i https://127.0.0.1/api/auth/me
+```
+
+期待値:
+
+```text
+GET /api/auth/me without token -> 401
+```
+
+`404` のままなら、WAF 設定がまだ反映されていないか、テスト対象 IP が別の VM / 別の Compose stack を指しています。

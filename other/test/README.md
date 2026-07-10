@@ -263,3 +263,87 @@ docker compose stop postgres
 python3 other/test/fastapi/check_fastapi.py 192.168.64.4 --expect-degraded-health
 docker compose start postgres
 ```
+
+### Auth Crypto
+
+2026-07-10 に Windows 側クライアントから Linux VM の公開入口 `172.16.30.197` に対して、認証・暗号化基盤の API 検証を実施しました。
+
+実行コマンド:
+
+```powershell
+python check_auth_crypto.py 172.16.30.197
+```
+
+確認できたこと:
+
+- `POST /api/auth/register`
+  - seller ユーザーを登録できた
+  - `role=seller`, `is_active=true` を返した
+- `POST /api/auth/register` の重複 email
+  - `409 {"detail":{"error":"email_already_registered"}}` を返した
+  - email の大文字小文字差分を正規化して同一扱いできている
+- `POST /api/auth/login` の誤 password
+  - `401 {"detail":{"error":"invalid_credentials"}}` を返した
+- `POST /api/auth/login` の正しい password
+  - `200`
+  - JWT 形式の `access_token` を返した
+  - `token_type=bearer`
+  - `expires_in=900`
+- `GET /api/auth/me`
+  - Bearer token 付きで `200`
+  - 登録済みユーザー情報を返した
+- `GET /api/auth/me` token なし
+  - `401 {"detail":{"error":"missing_token"}}` を返した
+- `POST /api/seller/profile`
+  - 出品者プロフィールを作成できた
+  - `business_email`, `phone`, `business_address` を API 上で復号済みレスポンスとして返した
+- `GET /api/seller/profile`
+  - 作成済み出品者プロフィールを取得できた
+
+結果:
+
+```text
+register_seller              matched=yes
+duplicate_email_rejected     matched=yes
+bad_password_rejected        matched=yes
+login_issues_jwt             matched=yes
+auth_me_accepts_bearer_token matched=yes
+auth_me_requires_token       matched=yes
+seller_profile_upsert        matched=yes
+seller_profile_get           matched=yes
+db_plaintext_inspection      skipped
+all_matched                  yes
+```
+
+この結果から、外部公開入口から次の本線を通って認証・出品者プロフィール API が成立していることを確認できました。
+
+```text
+Windows client
+  -> 172.16.30.197
+  -> external-firewall
+  -> nips
+  -> waf
+  -> reverse-proxy
+  -> internal-firewall
+  -> fastapi-app
+  -> postgres
+```
+
+残っている確認:
+
+- `db_plaintext_inspection` は未実行
+- DB 内に平文 email / password が保存されていないことは、Linux VM 側で `--check-db` を付けて確認する
+
+推奨コマンド:
+
+```bash
+cd /home/buchi/WebProgramming-ActiveLearner
+python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+期待値:
+
+```text
+db_plaintext_inspection matched=yes
+all_matched yes
+```
