@@ -7,11 +7,14 @@
 - ユーザー登録ができるか
 - 同じ email を重複登録できないか
 - 誤 password を `401` で拒否するか
-- 正しい password で login し、JWT を返すか
+- 正しい password で login し、access token と refresh token を返すか
+- refresh token をローテーションし、古い refresh token を拒否するか
 - Bearer token 付きで `/api/auth/me` が通るか
+- Bearer token 付きで `/api/auth/audit-events` が通るか
 - token なしの `/api/auth/me` を `401` で拒否するか
 - seller ユーザーが出品者プロフィールを作成・取得できるか
-- 任意で DB 内に平文 email / password が保存されていないか確認する
+- logout で refresh token を失効できるか
+- 任意で DB 内に平文 email / password / refresh token が保存されていないか確認する
 
 ## スクリプト
 
@@ -57,10 +60,19 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
   - `401`
 - `login_issues_jwt`
   - `200`
-  - `access_token` が JWT 形式で返る
+  - `access_token` が JWT 形式で返り、`refresh_token` も返る
 - `auth_me_accepts_bearer_token`
   - `200`
   - `X-Request-Id` が本文に伝播する
+- `refresh_rotates_token`
+  - `200`
+  - 新しい access token と refresh token を返す
+- `old_refresh_token_rejected`
+  - `401`
+  - ローテーション済みの古い refresh token は使えない
+- `own_audit_events_visible`
+  - `200`
+  - `auth_register`, `auth_login` など本人の監査イベントを返す
 - `auth_me_requires_token`
   - `401`
 - `seller_profile_upsert`
@@ -69,13 +81,16 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
 - `seller_profile_get`
   - `200`
   - business email を復号した値として返す
+- `logout_revokes_refresh_token`
+  - `200`
+  - refresh token を失効する
 - `db_plaintext_inspection`
-  - `--check-db` 指定時は DB 内の `email_ciphertext`, `email_lookup_hash`, `password_hash` に平文 email / password が含まれないことを見る
+  - `--check-db` 指定時は DB 内の `email_ciphertext`, `email_lookup_hash`, `password_hash`, `refresh_tokens.token_hash` に平文 email / password / refresh token が含まれないことと、`audit_events` にイベントが残ることを見る
 
 成功時の DB 内部検査出力例:
 
 ```text
-db_plaintext_inspection status=checked matched=yes f|f|f|t
+db_plaintext_inspection status=checked matched=yes f|f|f|t|t|t
 ```
 
 意味:
@@ -88,6 +103,10 @@ db_plaintext_inspection status=checked matched=yes f|f|f|t
   - `password_hash` に平文 password が含まれない
 - 4つ目 `t`
   - `password_hash` が `pbkdf2_sha256$600000$...` 形式である
+- 5つ目 `t`
+  - `refresh_tokens.token_hash` に平文 refresh token が含まれない
+- 6つ目 `t`
+  - `audit_events` に認証系イベントが残っている
 
 ## 注意
 
@@ -109,7 +128,7 @@ db_plaintext_inspection status=checked matched=yes f|f|f|t
 <center>nginx</center>
 ```
 
-この場合、FastAPI の認証 API まで届いていません。多くの場合、稼働中の `waf` コンテナが古い設定のままで、`/api/auth/register`, `/api/auth/login`, `/api/auth/me`, `/api/seller/profile` を許可していません。
+この場合、FastAPI の認証 API まで届いていません。多くの場合、稼働中の `waf` コンテナが古い設定のままで、`/api/auth/register`, `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/audit-events`, `/api/seller/profile` を許可していません。
 
 Linux VM 側で次を実行します。
 

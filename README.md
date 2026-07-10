@@ -23,6 +23,10 @@ Docker Compose を使って、公開用の DMZ、非公開の Application 層、
   - 外部公開されているのはどこか、`external-firewall` から `nips` / `waf` にどう受け渡すか、本来の別サーバ構成とどこまで噛み合っているかも説明
 - [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md)
   - CRYPTREC 暗号リストを参考にした password hash、個人情報暗号化、HMAC blind index、JWT、Marketplace 向け保存情報の設計メモ
+- [nids/README.md](/home/buchi/WebProgramming-ActiveLearner/nids/README.md)
+  - `audit_events` を使った NIDS 相当の認証異常検知の整理
+- [hids/README.md](/home/buchi/WebProgramming-ActiveLearner/hids/README.md)
+  - `fastapi-app` ホスト相当で見る HIDS/HIPS シグナルの整理
 
 ## 最終的に目指す構成
 
@@ -160,10 +164,10 @@ end
   - `reverse-proxy` の後段で `/api/` だけを `fastapi-app` に流す
 - `fastapi-app` コンテナ
   - `Backend Application`
-  - 商品 API、認証 API、出品者プロフィール API、PostgreSQL ヘルスチェックを返す
+  - 商品 API、認証 API、refresh token、監査イベント API、出品者プロフィール API、PostgreSQL ヘルスチェックを返す
 - `postgres` コンテナ
   - `DB / Database`
-  - 商品、認証、出品者プロフィール、監査イベントのデータ層を擬似的に分離
+  - 商品、認証、refresh token、出品者プロフィール、監査イベントのデータ層を擬似的に分離
 
 まだ独立していない要素は、今後必要に応じて分離します。
 
@@ -222,10 +226,10 @@ end
   - Internal Firewall 相当の nginx と Dockerfile
 - `fastapi/`
   - FastAPI の API 実装
-  - 商品 API、認証 API、JWT、出品者プロフィール API を含む
+  - 商品 API、認証 API、JWT、refresh token、監査イベント API、出品者プロフィール API を含む
 - `postgres/`
   - PostgreSQL の初期化 SQL、認証・暗号化設計メモ
-  - `products`, `users`, `seller_profiles`, `audit_events` を管理する
+  - `products`, `users`, `refresh_tokens`, `seller_profiles`, `audit_events` を管理する
 - `logs/`
   - external firewall / reverse proxy / internal firewall / postgres のログ保存先
 
@@ -268,24 +272,26 @@ Client
 
 つまり今回の段階では、External Firewall は「L4 gateway による入口分離」と「必要に応じた packet filtering 補助」の組み合わせとして実装しています。
 
-今後追加する対象は次の通りです。
+今後、独立レイヤーとして追加・分離する対象は次の通りです。
 
 - `API Gateway`
-- `NIDS`
-- `HIDS/HIPS`
+- `NIDS` の独立センサー化
+- `HIDS/HIPS` の独立監視基盤化
 
-## 現時点で未実装の扱い
+## 現時点で未独立の扱い
 
 現行 Compose の直列構成には、`nips` と `waf` はすでに本線として入っています。  
-まだ独立コンテナとして入っていないのは次です。
+まだ独立コンテナとして分離していないのは次です。
 
 - `API Gateway`
   - 現在は `fastapi-app` 内で API を直接提供している
   - 将来的に認証認可、API versioning、API 単位の rate limit を分離する候補
 - `NIDS`
-  - 通信本線ではなく、横から観測する監視レイヤーとして追加する候補
+  - 現段階では `audit_events` と `/api/security/monitoring/summary` で認証異常を検知する
+  - 将来的には通信本線ではなく、横から観測する独立監視レイヤーとして追加する候補
 - `HIDS/HIPS`
-  - `fastapi-app` やホスト相当の監視・保護として追加する候補
+  - 現段階では `fastapi-app` のログインロック、refresh token 失効、監査イベントを保護シグナルとして扱う
+  - 将来的にはホスト監視・保護として独立させる候補
 
 ## 起動
 
@@ -305,10 +311,20 @@ docker compose up -d --build
   - seller/customer ユーザー登録
 - `POST /api/auth/login`
   - JWT 発行
+- `POST /api/auth/refresh`
+  - refresh token をローテーションし、新しい access token を発行
+- `POST /api/auth/logout`
+  - refresh token を失効
 - `GET /api/auth/me`
   - Bearer token によるユーザー確認
+- `GET /api/auth/audit-events`
+  - Bearer token に紐づく本人の監査イベント確認
 - `POST /api/seller/profile`
   - 出品者プロフィール作成・更新
+- `GET /api/security/audit-events`
+  - admin / support 向けの監査イベント確認
+- `GET /api/security/monitoring/summary`
+  - admin / support 向けの NIDS/HIDS 相当シグナル集計
 
 ```bash
 curl -i http://127.0.0.1/health
@@ -316,6 +332,20 @@ curl -i http://127.0.0.1/api/health
 curl -i http://127.0.0.1/api/info
 curl -k -i https://127.0.0.1/api/health
 ```
+
+## 今回の変更対応
+
+今回追加した内容と、詳細を読む場所は次の通りです。
+
+| 変更 | 実装 | README / 設計メモ |
+| --- | --- | --- |
+| refresh token 発行・ローテーション・logout 失効 | `fastapi/app/main.py`, `postgres/init/001_products.sql` | [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/fastapi/README.md), [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) |
+| login attempt / account lockout | `fastapi/app/main.py`, `users.failed_login_count`, `users.locked_until` | [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/fastapi/README.md), [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) |
+| `audit_events` の活用 | `audit_events.severity`, `audit_events.details`, 認証イベント保存 | [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/fastapi/README.md), [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) |
+| NIDS 相当の検知 | `/api/security/monitoring/summary`, `audit_events` 集計 | [nids/README.md](/home/buchi/WebProgramming-ActiveLearner/nids/README.md) |
+| HIDS/HIPS 相当の保護 | アカウントロック、refresh token 失効、監査閲覧 | [hids/README.md](/home/buchi/WebProgramming-ActiveLearner/hids/README.md) |
+| WAF 許可ルート追加 | `/api/auth/refresh`, `/api/auth/logout`, audit / security API の許可 | [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md) |
+| 検証スクリプト拡張 | refresh rotation、古い token 拒否、audit 確認、DB 平文混入確認 | [other/test/auth-crypto/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/auth-crypto/README.md) |
 
 `External Firewall` の起動・停止・`nftables` 適用・比較検証の詳細は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1) にまとめています。
 
@@ -329,7 +359,10 @@ curl -k -i https://127.0.0.1/api/health
 - `waf` 追加後も正常な HTTP/HTTPS 疎通は維持された
 - `waf` は危険な User-Agent、XSS / SQLi 風 query、非許可メソッドを `403/405` で遮断した
 - 認証 API、JWT、出品者プロフィール API は公開入口経由で正常に動作した
+- refresh token の発行、ローテーション、logout による失効を実装対象に追加した
+- login attempt / account lockout を実装対象に追加し、失敗・ロック・refresh 失敗を `audit_events` に記録する
 - DB 内部検証で、平文 email/password が保存されていないことを確認した
+- DB 内部検証で、refresh token が平文保存されていないことを確認できるようにした
 
 詳細な結果と報告書向け総括は [external-firewall/README.md](/home/buchi/WebProgramming-ActiveLearner/external-firewall/README.md:1), [nips/README.md](/home/buchi/WebProgramming-ActiveLearner/nips/README.md:1), [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md:1) を参照してください。
 
@@ -343,7 +376,7 @@ curl -k -i https://127.0.0.1/api/health
 ## 今後の拡張候補
 
 - API Gateway を `fastapi-app` から独立させる
-- NIDS / HIDS を監視系として追加する
+- NIDS / HIDS を独立した監視基盤へ拡張する
 - host / cloud 側の本来の External Firewall を別レイヤーとして補完する
 - Marketplace 機能として注文、決済参照、配送、レビュー、監査ログを拡張する
 - Compose の開発用暗号鍵を secrets manager 相当へ移す
@@ -375,15 +408,22 @@ Client
 - 認証 API
   - `POST /api/auth/register`
   - `POST /api/auth/login`
+  - `POST /api/auth/refresh`
+  - `POST /api/auth/logout`
   - `GET /api/auth/me`
+  - `GET /api/auth/audit-events`
 - 出品者プロフィール API
   - `POST /api/seller/profile`
   - `GET /api/seller/profile`
+- 監視・監査 API
+  - `GET /api/security/audit-events`
+  - `GET /api/security/monitoring/summary`
 
 現在の DB:
 
 - `products`
 - `users`
+- `refresh_tokens`
 - `seller_profiles`
 - `audit_events`
 
@@ -392,8 +432,11 @@ Client
 - password は復号可能な暗号化ではなく、`PBKDF2-HMAC-SHA-256` で hash 保存する
 - email や出品者連絡先は `AES-256-GCM` で暗号化する
 - email / phone の検索には `HMAC-SHA-256` の blind index を使う
-- JWT は現段階では access token のみ
+- access token は JWT として発行する
+- access token は短命、refresh token は DB に HMAC hash として保存し、refresh 時にローテーションする
+- login 失敗回数を記録し、一定回数を超えたアカウントを一時ロックする
 - カード番号や CVV は DB に保存しない方針
+- `audit_events` には登録、ログイン、ログイン失敗、ロック、refresh、logout、出品者プロフィール更新を記録する
 
 検証済み:
 
@@ -403,10 +446,15 @@ Client
 - email 重複登録は `409` で拒否される
 - 誤 password は `401` で拒否される
 - login で JWT が発行される
+- login で refresh token が発行される
+- refresh token は再利用できず、新しい refresh token にローテーションされる
+- logout で refresh token を失効できる
 - Bearer token 付き `/api/auth/me` が動作する
 - token なし `/api/auth/me` は `401` になる
+- Bearer token 付き `/api/auth/audit-events` で本人の監査イベントを確認できる
 - seller profile の作成・取得が動作する
 - DB 内部検証で、平文 email/password が保存されていないことを確認済み
+- DB 内部検証で、refresh token が平文保存されていないことと、`audit_events` にイベントが残ることを確認できる
 
 認証・暗号化の検証結果は [other/test/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/README.md) と [other/test/auth-crypto/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/auth-crypto/README.md) に記録しています。  
 暗号化設計の考え方は [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) にまとめています。
@@ -414,10 +462,11 @@ Client
 次に進めるなら、優先度は次の順が自然です。
 
 1. 認証基盤の強化
-   - refresh token
-   - password reset
-   - login attempt / account lockout
-   - key rotation
+   - refresh token: 実装済み
+   - login attempt / account lockout: 実装済み
+   - audit_events 連携: 実装済み
+   - password reset: 未実装
+   - key rotation: 未実装
 2. Marketplace 機能の拡張
    - seller と product の関連付け
    - order / order_items
@@ -425,9 +474,10 @@ Client
    - shipment
    - review
 3. 監視・防御レイヤーの追加
-   - NIDS
-   - HIDS / HIPS
-   - audit_events の活用
+   - NIPS: HAProxy inline で実装済み
+   - NIDS: `audit_events` と `/api/security/monitoring/summary` で認証異常の検知シグナルを確認
+   - HIDS / HIPS: アカウントロック、refresh token 失効、権限付き監査閲覧をアプリホスト相当の保護シグナルとして整理
+   - audit_events の活用: 実装済み
 4. 本番化に近づける整理
    - Compose environment の開発用鍵を secrets manager 相当へ移す
    - API Gateway を独立させる

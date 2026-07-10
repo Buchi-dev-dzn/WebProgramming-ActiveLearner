@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
     CONSTRAINT users_role_allowed CHECK (role IN ('customer', 'seller', 'admin', 'support')),
     CONSTRAINT users_password_algorithm_allowed CHECK (password_algorithm = 'pbkdf2_hmac_sha256'),
     CONSTRAINT users_password_iterations_min CHECK (password_iterations >= 600000)
@@ -57,6 +59,29 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lookup_hash
 ON users (email_lookup_hash);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash BYTEA NOT NULL UNIQUE,
+    family_id UUID NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    replaced_by_token_hash BYTEA,
+    request_id TEXT,
+    source_ip_hash BYTEA,
+    user_agent_summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id
+ON refresh_tokens (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family_id
+ON refresh_tokens (family_id);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at
+ON refresh_tokens (expires_at);
 
 CREATE TABLE IF NOT EXISTS seller_profiles (
     id BIGSERIAL PRIMARY KEY,
@@ -95,8 +120,13 @@ CREATE TABLE IF NOT EXISTS audit_events (
     request_id TEXT,
     source_ip_hash BYTEA,
     user_agent_summary TEXT,
+    severity TEXT NOT NULL DEFAULT 'info',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_action
+ON audit_events (action);
 
 CREATE INDEX IF NOT EXISTS idx_audit_events_actor_user_id
 ON audit_events (actor_user_id);
@@ -110,6 +140,8 @@ GRANT SELECT, INSERT, UPDATE ON products TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE products_id_seq TO app_user;
 GRANT SELECT, INSERT, UPDATE ON users TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE users_id_seq TO app_user;
+GRANT SELECT, INSERT, UPDATE ON refresh_tokens TO app_user;
+GRANT USAGE, SELECT ON SEQUENCE refresh_tokens_id_seq TO app_user;
 GRANT SELECT, INSERT, UPDATE ON seller_profiles TO app_user;
 GRANT USAGE, SELECT ON SEQUENCE seller_profiles_id_seq TO app_user;
 GRANT SELECT, INSERT ON audit_events TO app_user;

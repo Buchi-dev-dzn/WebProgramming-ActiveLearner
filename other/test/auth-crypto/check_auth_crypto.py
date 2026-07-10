@@ -198,11 +198,13 @@ def main() -> None:
         payload={"email": email, "password": password},
     )
     token = login_payload.get("access_token") if login_payload else None
+    refresh_token = login_payload.get("refresh_token") if login_payload else None
     add_case(
         cases,
         "login_issues_jwt",
         login_status == 200
         and isinstance(token, str)
+        and isinstance(refresh_token, str)
         and len(token.split(".")) == 3
         and login_payload.get("token_type") == "bearer",
         login_body,
@@ -223,6 +225,60 @@ def main() -> None:
         and me_payload.get("user", {}).get("email") == email
         and me_payload.get("request_id") == request_id_header,
         me_body,
+    )
+
+    refresh_status, refresh_payload, refresh_body, _headers = request_json(
+        f"{base}/api/auth/refresh",
+        args.timeout,
+        method="POST",
+        payload={"refresh_token": refresh_token},
+    )
+    refreshed_token = refresh_payload.get("access_token") if refresh_payload else None
+    refreshed_refresh_token = (
+        refresh_payload.get("refresh_token") if refresh_payload else None
+    )
+    add_case(
+        cases,
+        "refresh_rotates_token",
+        refresh_status == 200
+        and isinstance(refreshed_token, str)
+        and isinstance(refreshed_refresh_token, str)
+        and refreshed_refresh_token != refresh_token,
+        refresh_body,
+    )
+    if refreshed_token:
+        token = refreshed_token
+        auth_headers = {"Authorization": f"Bearer {token}"}
+
+    reuse_status, _reuse_payload, reuse_body, _headers = request_json(
+        f"{base}/api/auth/refresh",
+        args.timeout,
+        method="POST",
+        payload={"refresh_token": refresh_token},
+    )
+    add_case(
+        cases,
+        "old_refresh_token_rejected",
+        reuse_status == 401,
+        reuse_body,
+    )
+
+    audit_status, audit_payload, audit_body, _headers = request_json(
+        f"{base}/api/auth/audit-events",
+        args.timeout,
+        headers=auth_headers,
+    )
+    audit_items = audit_payload.get("items", []) if audit_payload else []
+    audit_actions = {
+        item.get("action")
+        for item in audit_items
+        if isinstance(item, dict)
+    }
+    add_case(
+        cases,
+        "own_audit_events_visible",
+        audit_status == 200 and {"auth_register", "auth_login"} <= audit_actions,
+        audit_body,
     )
 
     no_token_status, _no_token_payload, no_token_body, _headers = request_json(
@@ -269,16 +325,38 @@ def main() -> None:
         seller_get_body,
     )
 
+    logout_status, _logout_payload, logout_body, _headers = request_json(
+        f"{base}/api/auth/logout",
+        args.timeout,
+        method="POST",
+        payload={"refresh_token": refreshed_refresh_token or refresh_token},
+        headers=auth_headers,
+    )
+    add_case(cases, "logout_revokes_refresh_token", logout_status == 200, logout_body)
+
     if args.check_db:
         db_result_added = False
+        user_id = int(register_payload.get("user", {}).get("id", 0)) if register_payload else 0
         sql = f"""
             SELECT
               encode(email_ciphertext, 'escape') LIKE '%{email}%',
               encode(email_lookup_hash, 'escape') LIKE '%{email}%',
               password_hash LIKE '%{password}%',
-              password_hash LIKE 'pbkdf2_sha256$600000$%'
+              password_hash LIKE 'pbkdf2_sha256$600000$%',
+              NOT EXISTS (
+                SELECT 1
+                FROM refresh_tokens
+                WHERE user_id = {user_id}
+                  AND encode(token_hash, 'escape') LIKE '%{refresh_token}%'
+              ),
+              EXISTS (
+                SELECT 1
+                FROM audit_events
+                WHERE actor_user_id = {user_id}
+                  AND action IN ('auth_register', 'auth_login', 'auth_refresh')
+              )
             FROM users
-            WHERE id = {int(register_payload.get('user', {}).get('id', 0)) if register_payload else 0};
+            WHERE id = {user_id};
             """
         if args.db_mode == "docker":
             if shutil.which("docker") is None:
@@ -299,11 +377,13 @@ def main() -> None:
             fields = stdout.split("|")
             db_ok = (
                 code == 0
-                and len(fields) == 4
+                and len(fields) == 6
                 and fields[0] == "f"
                 and fields[1] == "f"
                 and fields[2] == "f"
                 and fields[3] == "t"
+                and fields[4] == "t"
+                and fields[5] == "t"
             )
             add_case(
                 cases,

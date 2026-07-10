@@ -15,7 +15,7 @@
 - `FastAPI`
   - `/api/health`, `/api/info` と依存 DB 劣化時の JSON 応答を確認する
 - `Auth Crypto`
-  - ユーザー登録、ログイン、JWT、出品者プロフィール、DB 内の平文混入有無を確認する
+  - ユーザー登録、ログイン、JWT、refresh token、監査イベント、出品者プロフィール、DB 内の平文混入有無を確認する
 
 ## 前提
 

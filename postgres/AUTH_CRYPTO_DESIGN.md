@@ -347,9 +347,22 @@ tracking number は利用者やサポートが検索する可能性があるた�
 | request id | 通常保存 | 通信ログとの関連 |
 | source ip hash | HMAC-SHA-256 | IP を直接保存しない選択肢 |
 | user agent summary | 通常保存 | 調査用 |
+| severity | 通常保存 | info / warning / critical など |
+| details | JSONB | 失敗回数や拒否理由など、秘密情報を含まない補足 |
 | created_at | 通常保存 | 監査 |
 
 監査ログには平文 password、JWT、暗号鍵、カード情報、暗号化前の個人情報を出してはいけません。
+
+今回の実装では、`auth_register`, `auth_login`, `auth_login_failed`, `auth_login_blocked`, `auth_refresh`, `auth_refresh_failed`, `auth_logout`, `seller_profile_upsert` を `audit_events` に保存します。
+
+`audit_events` は NIDS/HIDS 相当の検知材料にも使います。
+
+- NIPS
+  - HAProxy inline で通信本線上の rate / handshake 異常を遮断する
+- NIDS
+  - `auth_login_failed`, `auth_login_blocked`, `auth_refresh_failed` などを集計して認証異常を見る
+- HIDS / HIPS
+  - アカウントロック、refresh token 失効、権限付き監査閲覧をアプリホスト内部の保護シグナルとして扱う
 
 ## Marketplace 向けテーブル候補
 
@@ -529,14 +542,15 @@ Authorization: Bearer <access_token>
 }
 ```
 
-## JWT 方針
+## JWT / refresh token 方針
 
-初期段階では access token のみを扱います。
+access token は短命にし、継続ログインには refresh token を使います。
 
 候補:
 
 ```text
 HS256
+refresh token hash = HMAC-SHA-256(JWT_SECRET_KEY, refresh_token)
 ```
 
 JWT に含める claim:
@@ -556,9 +570,25 @@ JWT に含める claim:
 
 ```text
 access token lifetime = 15 minutes
+refresh token lifetime = 14 days
 ```
 
-refresh token は次の段階で検討します。
+refresh token は平文保存しません。API レスポンスとして利用者に一度だけ返し、DB には HMAC-SHA-256 の hash を保存します。
+
+refresh 時は古い refresh token を失効し、新しい refresh token を発行します。これにより、同じ refresh token の再利用を拒否できます。
+
+保存するもの:
+
+- token hash
+- user id
+- token family id
+- issued_at / expires_at / revoked_at
+- source_ip_hash
+- user_agent_summary
+
+保存しないもの:
+
+- 平文 refresh token
 
 ## 必要な鍵と環境変数
 
@@ -608,18 +638,26 @@ EMAIL_LOOKUP_KEY_B64
 }
 ```
 
-## WAF で許可する予定のルート
+## WAF で許可する認証・監査ルート
 
-認証 API を追加する場合、WAF 側の許可ルートに次を追加します。
+認証 API と監査 API は、WAF 側でも method と path を明示して許可します。
 
 ```text
 POST:/api/auth/register
 POST:/api/auth/login
+POST:/api/auth/refresh
+POST:/api/auth/logout
 GET:/api/auth/me
 HEAD:/api/auth/me
+GET:/api/auth/audit-events
+HEAD:/api/auth/audit-events
+GET:/api/security/audit-events
+HEAD:/api/security/audit-events
+GET:/api/security/monitoring/summary
+HEAD:/api/security/monitoring/summary
 ```
 
-それ以外の `/api/auth/...` は原則 `404` または `403` とします。
+それ以外の `/api/auth/...` や `/api/security/...` は原則 `404` または `403` とします。
 
 ## 検証観点
 
@@ -629,6 +667,9 @@ HEAD:/api/auth/me
 - 同じ email で重複登録できない
 - 正しい password でログインできる
 - JWT 付きで `/api/auth/me` にアクセスできる
+- refresh token で `/api/auth/refresh` が通り、古い refresh token が失効する
+- logout で refresh token が失効する
+- `/api/auth/audit-events` で本人の監査イベントを確認できる
 - email は復号されてレスポンスに表示できる
 
 ### 異常系
@@ -638,6 +679,8 @@ HEAD:/api/auth/me
 - 無効 JWT は `401`
 - 期限切れ JWT は `401`
 - token なしの `/api/auth/me` は `401`
+- 無効 refresh token は `401`
+- ログイン失敗回数が閾値を超えたアカウントは一時ロックされる
 
 ### DB 保存確認
 
@@ -646,6 +689,8 @@ HEAD:/api/auth/me
 - `password_hash` は `pbkdf2_sha256$600000$...` 形式である
 - `email_ciphertext` は暗号化済みである
 - `email_lookup_hash` は HMAC であり、平文 email ではない
+- `refresh_tokens.token_hash` は HMAC であり、平文 refresh token ではない
+- `audit_events` に登録、ログイン、refresh、logout、失敗系イベントが残る
 
 ### 経路確認
 
@@ -653,16 +698,22 @@ HEAD:/api/auth/me
 - PostgreSQL へ外部から直接到達できない
 - DB 操作は FastAPI 経由でのみ成立する
 
-## 今後の拡張候補
+## 実装済みと今後の拡張候補
+
+実装済み:
 
 - refresh token テーブル
-- password reset token テーブル
 - login attempt / account lockout
+- refresh token の失効管理
+- `audit_events` への認証・監査イベント保存
+- `audit_events` を使った NIDS/HIDS 相当シグナルの集計
+
+今後の拡張候補:
+
+- password reset token テーブル
 - MFA
-- admin role
 - key rotation
 - 旧 password hash 方式からの段階的移行
-- refresh token の失効管理
 - DB バックアップ暗号化
 
 ## まとめ

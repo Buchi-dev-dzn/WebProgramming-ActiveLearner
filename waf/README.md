@@ -75,11 +75,19 @@ Client
 - `POST /api/product/stock`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
 - `GET /api/auth/me`
 - `HEAD /api/auth/me`
+- `GET /api/auth/audit-events`
+- `HEAD /api/auth/audit-events`
 - `GET /api/seller/profile`
 - `HEAD /api/seller/profile`
 - `POST /api/seller/profile`
+- `GET /api/security/audit-events`
+- `HEAD /api/security/audit-events`
+- `GET /api/security/monitoring/summary`
+- `HEAD /api/security/monitoring/summary`
 - `POST /api/health`
 - `POST /api/info`
 
@@ -99,14 +107,29 @@ Client
 - `/api/auth/login`
   - ログインの入口
   - WAF はルート到達だけを許可し、認証判定は FastAPI が行う
+- `/api/auth/refresh`
+  - refresh token ローテーションの入口
+  - token の HMAC hash 照合、失効判定、再発行は FastAPI が行う
+- `/api/auth/logout`
+  - refresh token 失効の入口
+  - Bearer token と refresh token の対応確認は FastAPI が行う
 - `/api/auth/me`
   - Bearer token 確認用
   - token の妥当性や権限判定は FastAPI が行う
+- `/api/auth/audit-events`
+  - ログイン中ユーザー本人の監査イベント確認用
+  - 本人確認と返却範囲の制御は FastAPI が行う
 - `/api/seller/profile`
   - 出品者プロフィールの作成・取得用
   - 事業者メール、電話番号、住所などは後段 FastAPI で暗号化される
+- `/api/security/audit-events`
+  - admin / support 向け監査イベント確認用
+  - 権限判定は FastAPI が行う
+- `/api/security/monitoring/summary`
+  - admin / support 向け NIDS/HIDS 相当シグナル集計用
+  - 集計対象は PostgreSQL の `audit_events`
 
-WAF は暗号化や password hash そのものは担当しない。WAF の役割は、認証 API と出品者プロフィール API への到達面を必要な HTTP method と path に限定すること。
+WAF は暗号化、password hash、refresh token 検証、権限判定そのものは担当しない。WAF の役割は、認証 API、監査 API、出品者プロフィール API への到達面を必要な HTTP method と path に限定すること。
 
 ### 2. path ベースの遮断を強化した
 
@@ -198,8 +221,13 @@ WAF は暗号化や password hash そのものは担当しない。WAF の役割
   - `/api/product/stock`
   - `/api/auth/register`
   - `/api/auth/login`
+  - `/api/auth/refresh`
+  - `/api/auth/logout`
   - `/api/auth/me`
+  - `/api/auth/audit-events`
   - `/api/seller/profile`
+  - `/api/security/audit-events`
+  - `/api/security/monitoring/summary`
 
 意味:
 
@@ -231,16 +259,21 @@ WAF は暗号化や password hash そのものは担当しない。WAF の役割
 
 ## 認証・出品 API 追加時の WAF の意味
 
-今回の FastAPI 側の拡張により、ログイン・JWT・出品者プロフィールの API が増えました。
+今回の FastAPI 側の拡張により、ログイン・JWT・refresh token・監査イベント・出品者プロフィールの API が増えました。
 
 WAF 側で追加したのは、これらの API を無条件に広く開けることではなく、次の条件だけを通すことです。
 
 ```text
 POST /api/auth/register
 POST /api/auth/login
+POST /api/auth/refresh
+POST /api/auth/logout
 GET  /api/auth/me
+GET  /api/auth/audit-events
 POST /api/seller/profile
 GET  /api/seller/profile
+GET  /api/security/audit-events
+GET  /api/security/monitoring/summary
 ```
 
 これにより、例えば次のような未知ルートは後段へ渡しません。
@@ -248,8 +281,10 @@ GET  /api/seller/profile
 ```text
 /api/auth/admin
 /api/auth/debug
+/api/auth/token-dump
 /api/seller/delete
 /api/seller/internal
+/api/security/debug
 ```
 
 認証情報や個人情報の保護は FastAPI と PostgreSQL の責務ですが、WAF はその前段で「そもそも想定していない URL を通さない」役割を持ちます。

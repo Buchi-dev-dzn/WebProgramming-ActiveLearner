@@ -29,13 +29,23 @@
 - `POST /api/auth/register`
   - email を AES-256-GCM で暗号化し、password を PBKDF2-HMAC-SHA-256 でハッシュ化してユーザー登録する
 - `POST /api/auth/login`
-  - email の HMAC blind index でユーザー検索し、password hash を検証して JWT を返す
+  - email の HMAC blind index でユーザー検索し、password hash を検証して access token と refresh token を返す
+- `POST /api/auth/refresh`
+  - refresh token を HMAC hash で照合し、古い token を失効して新しい access token / refresh token を返す
+- `POST /api/auth/logout`
+  - Bearer token と refresh token を確認し、refresh token を失効する
 - `GET /api/auth/me`
   - Bearer token を検証して現在のユーザー情報を返す
+- `GET /api/auth/audit-events`
+  - Bearer token のユーザー本人に紐づく監査イベントを返す
 - `POST /api/seller/profile`
   - seller / admin ユーザーの出品者プロフィールを作成または更新する
 - `GET /api/seller/profile`
   - Bearer token に紐づく出品者プロフィールを返す
+- `GET /api/security/audit-events`
+  - admin / support ユーザー向けに監査イベントを返す
+- `GET /api/security/monitoring/summary`
+  - admin / support ユーザー向けに認証異常、NIDS/HIDS 相当のシグナル概要を返す
 
 ## SQL と DB アクセスの扱い
 
@@ -48,8 +58,57 @@
 - SKU は `^[A-Za-z0-9._-]+$` に制限し、不要な文字を API 入力で受け付けない
 - パスワードは復号可能な暗号化ではなく、`PBKDF2-HMAC-SHA-256` の password hash として保存する
 - email や出品者連絡先は `AES-256-GCM` で暗号化し、検索には `HMAC-SHA-256` の blind index を使う
+- refresh token は平文保存せず、`JWT_SECRET_KEY_B64` を使った HMAC-SHA-256 の token hash として保存する
+- ログイン失敗回数と一時ロック状態を `users` に保持する
+- 登録、ログイン、ログイン失敗、ロック、refresh、logout、出品者プロフィール更新を `audit_events` に記録する
 - JWT, 暗号鍵, 平文 password, password hash, ciphertext, lookup hash はログに出さない前提で扱う
 - `JWT_SECRET_KEY_B64`, `DATA_ENCRYPTION_KEY_B64`, `EMAIL_LOOKUP_KEY_B64` は学習用には Compose の environment で渡しているが、本番では secret manager などへ移す
+
+## 今回追加した認証強化
+
+### refresh token
+
+- `POST /api/auth/login` は短命の access token と refresh token を返す
+- refresh token は平文では保存しない
+- DB には `refresh_tokens.token_hash` として HMAC-SHA-256 の hash を保存する
+- `POST /api/auth/refresh` は古い refresh token を失効し、新しい access token / refresh token を返す
+- ローテーション済みの古い refresh token は再利用できない
+- `POST /api/auth/logout` は該当 refresh token を失効する
+
+### login attempt / account lockout
+
+- ログイン失敗回数は `users.failed_login_count` に保存する
+- 失敗回数が閾値を超えた場合は `users.locked_until` に一時ロック期限を保存する
+- ロック中のログイン試行は `423 account_locked` を返す
+- 正常ログイン時は失敗回数とロック状態をリセットする
+
+### audit_events
+
+- `auth_register`
+- `auth_login`
+- `auth_login_failed`
+- `auth_login_blocked`
+- `auth_refresh`
+- `auth_refresh_failed`
+- `auth_logout`
+- `seller_profile_upsert`
+
+これらを `audit_events` に保存する。`source_ip_hash` は IP をそのまま残さず HMAC hash として扱い、`user_agent_summary` は長さと制御文字を抑えた要約だけを保存する。
+
+## 監視・監査 API
+
+- `GET /api/auth/audit-events`
+  - Bearer token の本人に紐づく監査イベントだけを返す
+- `GET /api/security/audit-events`
+  - `admin` / `support` 向けに監査イベントを返す
+- `GET /api/security/monitoring/summary`
+  - `audit_events` を集計し、NIDS/HIDS 相当の認証異常シグナルを返す
+
+## DB 初期化の注意
+
+`refresh_tokens`, `users.failed_login_count`, `users.locked_until`, `audit_events.severity`, `audit_events.details` は [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql) で定義している。
+
+既存の `postgres_data` volume が残っている環境では、PostgreSQL の docker-entrypoint 初期化 SQL は自動再実行されない。その場合は管理者ユーザーで SQL を適用するか、学習環境であれば volume を再作成してから起動する。
 
 例:
 
@@ -68,6 +127,11 @@ curl -k -i https://127.0.0.1/api/auth/register \
 curl -k -i https://127.0.0.1/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"seller@example.test","password":"example-password-123"}'
+curl -k -i https://127.0.0.1/api/auth/refresh \
+  -H 'Content-Type: application/json' \
+  -d '{"refresh_token":"<refresh token>"}'
+curl -k -i https://127.0.0.1/api/auth/audit-events \
+  -H 'Authorization: Bearer <access token>'
 ```
 
 ## 補足

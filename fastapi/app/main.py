@@ -2,9 +2,11 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,6 +28,10 @@ AUTH_KEY_ID = "dev-key-1"
 JWT_ALGORITHM = "HS256"
 JWT_ISSUER = "security-ec-3tier"
 ACCESS_TOKEN_SECONDS = 900
+REFRESH_TOKEN_SECONDS = 60 * 60 * 24 * 14
+MAX_FAILED_LOGINS = 5
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+MAX_AUDIT_LIMIT = 100
 db_pool: asyncpg.Pool | None = None
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -51,6 +57,14 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=256)
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
 
 
 class SellerProfileUpsert(BaseModel):
@@ -111,6 +125,32 @@ def seller_profile_to_dict(record: asyncpg.Record) -> dict[str, Any]:
     }
 
 
+def jsonb_to_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def audit_event_to_dict(record: asyncpg.Record) -> dict[str, Any]:
+    return {
+        "id": record["id"],
+        "actor_user_id": record["actor_user_id"],
+        "action": record["action"],
+        "target_type": record["target_type"],
+        "target_id": record["target_id"],
+        "request_id": record["request_id"],
+        "severity": record["severity"],
+        "details": jsonb_to_dict(record["details"]),
+        "created_at": record["created_at"].isoformat(),
+    }
+
+
 def decode_required_key(value: str | None, name: str, expected_len: int = 32) -> bytes:
     if not value:
         raise HTTPException(
@@ -161,6 +201,32 @@ def decrypt_optional(ciphertext: bytes | None, nonce: bytes | None) -> str | Non
 def lookup_hmac(value: str) -> bytes:
     key = decode_required_key(EMAIL_LOOKUP_KEY_B64, "EMAIL_LOOKUP_KEY_B64")
     return hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest()
+
+
+def token_hmac(value: str) -> bytes:
+    key = decode_required_key(JWT_SECRET_KEY_B64, "JWT_SECRET_KEY_B64")
+    return hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest()
+
+
+def source_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def source_ip_hash(request: Request) -> bytes:
+    return lookup_hmac(source_ip(request))
+
+
+def user_agent_summary(request: Request) -> str | None:
+    user_agent = request.headers.get("user-agent")
+    if not user_agent:
+        return None
+    summary = re.sub(r"[\r\n\t]+", " ", user_agent).strip()
+    return summary[:200]
 
 
 def hash_password(password: str) -> str:
@@ -217,6 +283,10 @@ def create_access_token(user_id: int, role: str) -> str:
     return jwt.encode(payload, key, algorithm=JWT_ALGORITHM)
 
 
+def create_refresh_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
 def decode_access_token(token: str) -> dict[str, Any]:
     key = decode_required_key(JWT_SECRET_KEY_B64, "JWT_SECRET_KEY_B64")
     try:
@@ -263,6 +333,81 @@ async def current_user_record(authorization: str | None) -> asyncpg.Record:
     if record is None or not record["is_active"]:
         raise HTTPException(status_code=401, detail={"error": "invalid_token"})
     return record
+
+
+async def require_role(authorization: str | None, allowed_roles: set[str]) -> asyncpg.Record:
+    user = await current_user_record(authorization)
+    if user["role"] not in allowed_roles:
+        raise HTTPException(status_code=403, detail={"error": "insufficient_role"})
+    return user
+
+
+async def insert_audit_event(
+    connection: asyncpg.Connection,
+    request: Request,
+    action: str,
+    actor_user_id: int | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    severity: str = "info",
+    details: dict[str, Any] | None = None,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO audit_events (
+            actor_user_id,
+            action,
+            target_type,
+            target_id,
+            request_id,
+            source_ip_hash,
+            user_agent_summary,
+            severity,
+            details
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+        """,
+        actor_user_id,
+        action,
+        target_type,
+        target_id,
+        extract_request_id(request),
+        source_ip_hash(request),
+        user_agent_summary(request),
+        severity,
+        json.dumps(details or {}),
+    )
+
+
+async def issue_refresh_token(
+    connection: asyncpg.Connection,
+    request: Request,
+    user_id: int,
+    family_id: uuid.UUID | None = None,
+) -> str:
+    refresh_token = create_refresh_token()
+    await connection.execute(
+        """
+        INSERT INTO refresh_tokens (
+            user_id,
+            token_hash,
+            family_id,
+            expires_at,
+            request_id,
+            source_ip_hash,
+            user_agent_summary
+        )
+        VALUES ($1, $2, $3, now() + make_interval(secs => $4), $5, $6, $7)
+        """,
+        user_id,
+        token_hmac(refresh_token),
+        family_id or uuid.uuid4(),
+        REFRESH_TOKEN_SECONDS,
+        extract_request_id(request),
+        source_ip_hash(request),
+        user_agent_summary(request),
+    )
+    return refresh_token
 
 
 @asynccontextmanager
@@ -404,13 +549,13 @@ async def register_user(payload: UserRegister, request: Request):
                 status_code=409,
                 detail={"error": "email_already_registered"},
             ) from error
-        await connection.execute(
-            """
-            INSERT INTO audit_events (actor_user_id, action, request_id)
-            VALUES ($1, 'auth_register', $2)
-            """,
-            record["id"],
-            extract_request_id(request),
+        await insert_audit_event(
+            connection,
+            request,
+            "auth_register",
+            actor_user_id=record["id"],
+            target_type="user",
+            target_id=str(record["id"]),
         )
 
     return {
@@ -422,23 +567,85 @@ async def register_user(payload: UserRegister, request: Request):
 @app.post("/api/auth/login")
 async def login_user(payload: UserLogin, request: Request):
     email = normalize_email(payload.email)
+    email_lookup_hash = lookup_hmac(email)
     pool = require_db_pool()
     async with pool.acquire() as connection:
         record = await connection.fetchrow(
             """
             SELECT id, email_ciphertext, email_nonce, password_hash, role,
-                   is_active, created_at, last_login_at
+                   is_active, created_at, last_login_at, failed_login_count,
+                   locked_until
             FROM users
             WHERE email_lookup_hash = $1
             """,
-            lookup_hmac(email),
+            email_lookup_hash,
         )
 
-        if (
-            record is None
-            or not record["is_active"]
-            or not verify_password(payload.password, record["password_hash"])
+        if record is not None and record["locked_until"]:
+            locked_until = record["locked_until"]
+            if locked_until > datetime.now(UTC):
+                await insert_audit_event(
+                    connection,
+                    request,
+                    "auth_login_blocked",
+                    actor_user_id=record["id"],
+                    target_type="user",
+                    target_id=str(record["id"]),
+                    severity="warning",
+                    details={"reason": "account_locked"},
+                )
+                raise HTTPException(
+                    status_code=423,
+                    detail={
+                        "error": "account_locked",
+                        "locked_until": locked_until.isoformat(),
+                    },
+                )
+
+        if record is None or not record["is_active"] or not verify_password(
+            payload.password,
+            record["password_hash"],
         ):
+            if record is not None:
+                failed_count = int(record["failed_login_count"]) + 1
+                locked_until = None
+                if failed_count >= MAX_FAILED_LOGINS:
+                    locked_until = datetime.now(UTC) + timedelta(
+                        seconds=LOGIN_LOCKOUT_SECONDS
+                    )
+                await connection.execute(
+                    """
+                    UPDATE users
+                    SET failed_login_count = $2,
+                        locked_until = $3,
+                        updated_at = now()
+                    WHERE id = $1
+                    """,
+                    record["id"],
+                    failed_count,
+                    locked_until,
+                )
+                await insert_audit_event(
+                    connection,
+                    request,
+                    "auth_login_failed",
+                    actor_user_id=record["id"],
+                    target_type="user",
+                    target_id=str(record["id"]),
+                    severity="warning",
+                    details={
+                        "failed_count": failed_count,
+                        "locked": locked_until is not None,
+                    },
+                )
+            else:
+                await insert_audit_event(
+                    connection,
+                    request,
+                    "auth_login_failed",
+                    severity="warning",
+                    details={"known_user": False},
+                )
             raise HTTPException(
                 status_code=401,
                 detail={"error": "invalid_credentials"},
@@ -448,6 +655,8 @@ async def login_user(payload: UserLogin, request: Request):
             """
             UPDATE users
             SET last_login_at = now(),
+                failed_login_count = 0,
+                locked_until = NULL,
                 updated_at = now()
             WHERE id = $1
             RETURNING id, email_ciphertext, email_nonce, role, is_active,
@@ -455,22 +664,141 @@ async def login_user(payload: UserLogin, request: Request):
             """,
             record["id"],
         )
-        await connection.execute(
-            """
-            INSERT INTO audit_events (actor_user_id, action, request_id)
-            VALUES ($1, 'auth_login', $2)
-            """,
-            record["id"],
-            extract_request_id(request),
+        refresh_token = await issue_refresh_token(connection, request, updated["id"])
+        await insert_audit_event(
+            connection,
+            request,
+            "auth_login",
+            actor_user_id=record["id"],
+            target_type="user",
+            target_id=str(record["id"]),
         )
 
     return {
         "access_token": create_access_token(updated["id"], updated["role"]),
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_SECONDS,
+        "refresh_expires_in": REFRESH_TOKEN_SECONDS,
         "user": user_to_public_dict(updated, email),
         "request_id": extract_request_id(request),
     }
+
+
+@app.post("/api/auth/refresh")
+async def refresh_access_token(payload: RefreshTokenRequest, request: Request):
+    pool = require_db_pool()
+    incoming_hash = token_hmac(payload.refresh_token)
+    refresh_failed = False
+    failed_actor_user_id = None
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            record = await connection.fetchrow(
+                """
+                SELECT rt.id AS refresh_token_id, rt.user_id, rt.family_id,
+                       rt.expires_at, rt.revoked_at,
+                       u.id, u.role, u.is_active, u.email_ciphertext, u.email_nonce,
+                       u.created_at, u.last_login_at
+                FROM refresh_tokens rt
+                JOIN users u ON u.id = rt.user_id
+                WHERE rt.token_hash = $1
+                FOR UPDATE OF rt
+                """,
+                incoming_hash,
+            )
+            if (
+                record is None
+                or record["revoked_at"] is not None
+                or record["expires_at"] <= datetime.now(UTC)
+                or not record["is_active"]
+            ):
+                refresh_failed = True
+                failed_actor_user_id = record["user_id"] if record is not None else None
+            else:
+                new_refresh_token = await issue_refresh_token(
+                    connection,
+                    request,
+                    record["user_id"],
+                    record["family_id"],
+                )
+                await connection.execute(
+                    """
+                    UPDATE refresh_tokens
+                    SET revoked_at = now(),
+                        replaced_by_token_hash = $2
+                    WHERE id = $1
+                    """,
+                    record["refresh_token_id"],
+                    token_hmac(new_refresh_token),
+                )
+                await insert_audit_event(
+                    connection,
+                    request,
+                    "auth_refresh",
+                    actor_user_id=record["user_id"],
+                    target_type="user",
+                    target_id=str(record["user_id"]),
+                )
+
+        if refresh_failed:
+            await insert_audit_event(
+                connection,
+                request,
+                "auth_refresh_failed",
+                actor_user_id=failed_actor_user_id,
+                target_type="user" if failed_actor_user_id is not None else None,
+                target_id=str(failed_actor_user_id)
+                if failed_actor_user_id is not None
+                else None,
+                severity="warning",
+                details={"reason": "invalid_refresh_token"},
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={"error": "invalid_refresh_token"},
+            )
+
+    email = decrypt_text(record["email_ciphertext"], record["email_nonce"])
+    return {
+        "access_token": create_access_token(record["user_id"], record["role"]),
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_SECONDS,
+        "refresh_expires_in": REFRESH_TOKEN_SECONDS,
+        "user": user_to_public_dict(record, email),
+        "request_id": extract_request_id(request),
+    }
+
+
+@app.post("/api/auth/logout")
+async def logout_user(
+    payload: LogoutRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    user = await current_user_record(authorization)
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        await connection.execute(
+            """
+            UPDATE refresh_tokens
+            SET revoked_at = now()
+            WHERE token_hash = $1
+              AND user_id = $2
+              AND revoked_at IS NULL
+            """,
+            token_hmac(payload.refresh_token),
+            user["id"],
+        )
+        await insert_audit_event(
+            connection,
+            request,
+            "auth_logout",
+            actor_user_id=user["id"],
+            target_type="user",
+            target_id=str(user["id"]),
+        )
+    return {"revoked": True, "request_id": extract_request_id(request)}
 
 
 @app.get("/api/auth/me")
@@ -482,6 +810,34 @@ async def auth_me(
     email = decrypt_text(record["email_ciphertext"], record["email_nonce"])
     return {
         "user": user_to_public_dict(record, email),
+        "request_id": extract_request_id(request),
+    }
+
+
+@app.get("/api/auth/audit-events")
+async def my_audit_events(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    limit: int = Query(default=25, ge=1, le=MAX_AUDIT_LIMIT),
+):
+    user = await current_user_record(authorization)
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        records = await connection.fetch(
+            """
+            SELECT id, actor_user_id, action, target_type, target_id, request_id,
+                   severity, details, created_at
+            FROM audit_events
+            WHERE actor_user_id = $1
+            ORDER BY id DESC
+            LIMIT $2
+            """,
+            user["id"],
+            limit,
+        )
+    return {
+        "items": [audit_event_to_dict(record) for record in records],
+        "limit": limit,
         "request_id": extract_request_id(request),
     }
 
@@ -587,18 +943,105 @@ async def upsert_seller_profile(
             address_key_id,
             payload.payout_account_token,
         )
-        await connection.execute(
-            """
-            INSERT INTO audit_events (actor_user_id, action, target_type, target_id, request_id)
-            VALUES ($1, 'seller_profile_upsert', 'seller_profile', $2, $3)
-            """,
-            user["id"],
-            str(record["id"]),
-            extract_request_id(request),
+        await insert_audit_event(
+            connection,
+            request,
+            "seller_profile_upsert",
+            actor_user_id=user["id"],
+            target_type="seller_profile",
+            target_id=str(record["id"]),
         )
 
     return {
         "seller_profile": seller_profile_to_dict(record),
+        "request_id": extract_request_id(request),
+    }
+
+
+@app.get("/api/security/audit-events")
+async def list_audit_events(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    limit: int = Query(default=50, ge=1, le=MAX_AUDIT_LIMIT),
+):
+    await require_role(authorization, {"admin", "support"})
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        records = await connection.fetch(
+            """
+            SELECT id, actor_user_id, action, target_type, target_id, request_id,
+                   severity, details, created_at
+            FROM audit_events
+            ORDER BY id DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return {
+        "items": [audit_event_to_dict(record) for record in records],
+        "limit": limit,
+        "request_id": extract_request_id(request),
+    }
+
+
+@app.get("/api/security/monitoring/summary")
+async def security_monitoring_summary(
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    await require_role(authorization, {"admin", "support"})
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        records = await connection.fetch(
+            """
+            SELECT action, severity, count(*) AS count
+            FROM audit_events
+            WHERE created_at >= now() - interval '24 hours'
+            GROUP BY action, severity
+            ORDER BY count DESC, action
+            """
+        )
+        recent_warnings = await connection.fetch(
+            """
+            SELECT id, actor_user_id, action, target_type, target_id, request_id,
+                   severity, details, created_at
+            FROM audit_events
+            WHERE severity IN ('warning', 'critical')
+            ORDER BY id DESC
+            LIMIT 20
+            """
+        )
+    return {
+        "window": "24h",
+        "nips": {
+            "status": "inline",
+            "source": "haproxy at external-firewall -> nips -> waf",
+        },
+        "nids": {
+            "status": "audit-log-backed",
+            "signals": [
+                "auth_login_failed",
+                "auth_login_blocked",
+                "auth_refresh_failed",
+            ],
+        },
+        "hids": {
+            "status": "application-host-backed",
+            "signals": [
+                "account lockout state",
+                "refresh token revocation",
+                "privileged audit access",
+            ],
+        },
+        "counts": [
+            {
+                "action": record["action"],
+                "severity": record["severity"],
+                "count": record["count"],
+            }
+            for record in records
+        ],
+        "recent_warnings": [audit_event_to_dict(record) for record in recent_warnings],
         "request_id": extract_request_id(request),
     }
 
