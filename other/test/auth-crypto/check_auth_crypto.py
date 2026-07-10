@@ -31,6 +31,17 @@ def parse_args() -> argparse.Namespace:
         help="Use docker compose exec postgres to inspect stored auth data.",
     )
     parser.add_argument(
+        "--db-mode",
+        choices=["docker", "psql"],
+        default="docker",
+        help="DB inspection mode for --check-db (default: docker).",
+    )
+    parser.add_argument(
+        "--psql-dsn",
+        default="postgresql://app_user:app_password@127.0.0.1:5432/app_db",
+        help="PostgreSQL DSN for --db-mode psql.",
+    )
+    parser.add_argument(
         "--compose-dir",
         default=".",
         help="Directory containing docker-compose.yml when --check-db is used.",
@@ -117,6 +128,17 @@ def run_psql(compose_dir: str, sql: str) -> tuple[int, str, str]:
     completed = subprocess.run(
         command,
         cwd=compose_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def run_direct_psql(dsn: str, sql: str) -> tuple[int, str, str]:
+    command = ["psql", dsn, "-At", "-c", sql]
+    completed = subprocess.run(
+        command,
         text=True,
         capture_output=True,
         check=False,
@@ -248,10 +270,8 @@ def main() -> None:
     )
 
     if args.check_db:
-        if shutil.which("docker") is None:
-            add_case(cases, "db_plaintext_inspection", False, "docker command not found")
-        else:
-            sql = f"""
+        db_result_added = False
+        sql = f"""
             SELECT
               encode(email_ciphertext, 'escape') LIKE '%{email}%',
               encode(email_lookup_hash, 'escape') LIKE '%{email}%',
@@ -260,7 +280,22 @@ def main() -> None:
             FROM users
             WHERE id = {int(register_payload.get('user', {}).get('id', 0)) if register_payload else 0};
             """
-            code, stdout, stderr = run_psql(args.compose_dir, sql)
+        if args.db_mode == "docker":
+            if shutil.which("docker") is None:
+                add_case(cases, "db_plaintext_inspection", False, "docker command not found")
+                db_result_added = True
+                code, stdout, stderr = 1, "", "docker command not found"
+            else:
+                code, stdout, stderr = run_psql(args.compose_dir, sql)
+        else:
+            if shutil.which("psql") is None:
+                add_case(cases, "db_plaintext_inspection", False, "psql command not found")
+                db_result_added = True
+                code, stdout, stderr = 1, "", "psql command not found"
+            else:
+                code, stdout, stderr = run_direct_psql(args.psql_dsn, sql)
+
+        if not db_result_added:
             fields = stdout.split("|")
             db_ok = (
                 code == 0

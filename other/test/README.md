@@ -347,3 +347,97 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compo
 db_plaintext_inspection matched=yes
 all_matched yes
 ```
+
+### Auth Crypto DB 内検証の途中結果
+
+2026-07-10 に Linux VM 側で `--check-db` 付きの検証を実施しました。
+
+実行コマンド:
+
+```bash
+python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+API 経由の検証結果:
+
+```text
+register_seller              matched=yes
+duplicate_email_rejected     matched=yes
+bad_password_rejected        matched=yes
+login_issues_jwt             matched=yes
+auth_me_accepts_bearer_token matched=yes
+auth_me_requires_token       matched=yes
+seller_profile_upsert        matched=yes
+seller_profile_get           matched=yes
+```
+
+DB 内部検証結果:
+
+```text
+db_plaintext_inspection matched=no
+detail=permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
+all_matched no
+```
+
+この結果の意味:
+
+- 認証 API、JWT、出品者プロフィール API はすべて正常に動作している
+- `db_plaintext_inspection` はアプリ不具合ではなく、検証スクリプトが `docker compose exec postgres ...` を実行できない Docker socket 権限問題で失敗している
+- DB 内の平文混入確認は、Docker API にアクセスできるユーザーまたは `sudo` で再実行する必要がある
+
+再実行例:
+
+```bash
+cd /home/buchi/WebProgramming-ActiveLearner
+sudo python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+または、現在のユーザーを Docker API にアクセスできる状態にしてから再実行します。
+
+```bash
+sudo usermod -aG docker buchi
+newgrp docker
+python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+### Auth Crypto DB 内検証の成功結果
+
+2026-07-10 に `sudo` で Docker API へアクセスできる状態にして、DB 内部検証まで成功しました。
+
+実行コマンド:
+
+```bash
+sudo python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+結果:
+
+```text
+register_seller              matched=yes
+duplicate_email_rejected     matched=yes
+bad_password_rejected        matched=yes
+login_issues_jwt             matched=yes
+auth_me_accepts_bearer_token matched=yes
+auth_me_requires_token       matched=yes
+seller_profile_upsert        matched=yes
+seller_profile_get           matched=yes
+db_plaintext_inspection      matched=yes
+all_matched                  yes
+```
+
+DB 内部検証の出力:
+
+```text
+f|f|f|t
+```
+
+この 4 値の意味:
+
+| 値 | 検査内容 | 結果 |
+| --- | --- | --- |
+| 1つ目 `f` | `email_ciphertext` に平文 email が含まれるか | 含まれない |
+| 2つ目 `f` | `email_lookup_hash` に平文 email が含まれるか | 含まれない |
+| 3つ目 `f` | `password_hash` に平文 password が含まれるか | 含まれない |
+| 4つ目 `t` | `password_hash` が `pbkdf2_sha256$600000$...` 形式か | 形式どおり |
+
+これにより、API 経由の認証・JWT・出品者プロフィール操作に加えて、DB 保存時にも最低限の平文混入がないことを確認できました。

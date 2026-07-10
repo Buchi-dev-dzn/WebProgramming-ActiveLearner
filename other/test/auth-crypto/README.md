@@ -37,6 +37,14 @@ DB 内の保存状態まで確認する:
 python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
 ```
 
+Docker API を使わず、直接 `psql` で到達できる環境では次も使えます。
+
+```bash
+python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mode psql --psql-dsn postgresql://app_user:app_password@127.0.0.1:5432/app_db
+```
+
+ただし現在の Compose では PostgreSQL をホスト公開していないため、通常は `--db-mode docker` を使います。
+
 ## 期待値
 
 - `register_seller`
@@ -63,6 +71,23 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compo
   - business email を復号した値として返す
 - `db_plaintext_inspection`
   - `--check-db` 指定時は DB 内の `email_ciphertext`, `email_lookup_hash`, `password_hash` に平文 email / password が含まれないことを見る
+
+成功時の DB 内部検査出力例:
+
+```text
+db_plaintext_inspection status=checked matched=yes f|f|f|t
+```
+
+意味:
+
+- 1つ目 `f`
+  - `email_ciphertext` に平文 email が含まれない
+- 2つ目 `f`
+  - `email_lookup_hash` に平文 email が含まれない
+- 3つ目 `f`
+  - `password_hash` に平文 password が含まれない
+- 4つ目 `t`
+  - `password_hash` が `pbkdf2_sha256$600000$...` 形式である
 
 ## 注意
 
