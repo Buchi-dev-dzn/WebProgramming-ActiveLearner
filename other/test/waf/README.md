@@ -18,6 +18,8 @@
 - 危険な path や URL override header を `403` で止めるか
 - 未許可ルートを `404` で閉じるか
 - 非許可メソッドを `405` で止めるか
+- 認証・出品者プロフィールの許可ルートだけを後段に通すか
+- `/api/auth/debug` や `/api/seller/internal` のような未知ルートを `404` で閉じるか
 
 ## スクリプト
 
@@ -63,6 +65,16 @@ python3 other/test/waf/check_waf.py 192.168.64.4 --json
   - `404`
 - `PUT /`
   - `405`
+- `POST /api/auth/register` with empty JSON
+  - `422`
+  - WAF は許可し、後段 FastAPI の validation error が返る
+- `GET /api/auth/debug`
+  - `404`
+- `GET /api/seller/profile` without token
+  - `401`
+  - WAF は許可し、後段 FastAPI の認証エラーが返る
+- `GET /api/seller/internal`
+  - `404`
 
 ## 有効時の意味
 

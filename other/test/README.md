@@ -14,6 +14,8 @@
   - DMZ 公開中継点として `/health`, ルート制限, request ID, upstream 障害応答を制御できるか確認する
 - `FastAPI`
   - `/api/health`, `/api/info` と依存 DB 劣化時の JSON 応答を確認する
+- `Auth Crypto`
+  - ユーザー登録、ログイン、JWT、出品者プロフィール、DB 内の平文混入有無を確認する
 
 ## 前提
 
@@ -34,6 +36,8 @@
   - DMZ 中継と upstream 障害時の確認
 - [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/fastapi/README.md)
   - API 応答と DB 劣化時の確認
+- [auth-crypto/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/auth-crypto/README.md)
+  - 認証・暗号化・出品者プロフィールの確認
 
 ## 使い分け
 
@@ -47,6 +51,8 @@
   - `reverse-proxy/check_reverse_proxy.py`
 - FastAPI が正常系と劣化系でどう返すか見たい
   - `fastapi/check_fastapi.py`
+- 認証情報や個人情報の保存方針を見たい
+  - `auth-crypto/check_auth_crypto.py`
 
 ## 典型的な実行順序
 
@@ -60,6 +66,9 @@
    - `python3 other/test/reverse-proxy/check_reverse_proxy.py 192.168.64.4`
 5. FastAPI
    - `python3 other/test/fastapi/check_fastapi.py 192.168.64.4`
+6. Auth Crypto
+   - `python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4`
+   - `python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner`
 
 ## 注意
 
@@ -67,6 +76,7 @@
 - `WAF` の `403/404/405` は `WAF` 有効時を前提にしている
 - `Reverse Proxy` の比較では `internal-firewall` 停止時の `503` を見る
 - `FastAPI` の比較では `postgres` 停止時の `503/degraded` を見る
+- `Auth Crypto` の DB 内検証は Docker API にアクセスできる環境でのみ実行する
 - `pass-through` 構成で比較したい場合は、各 README にある無効化・比較手順を使う
 
 ## 比較メモ用テーブル

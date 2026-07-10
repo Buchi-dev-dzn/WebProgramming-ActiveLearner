@@ -158,6 +158,35 @@ def main() -> None:
             405,
             args.timeout,
         ),
+        request_case(
+            "auth_register_route_allowed",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/auth/register",
+            422,
+            args.timeout,
+            headers={"Content-Type": "application/json"},
+        ),
+        request_case(
+            "auth_unknown_route_closed",
+            "GET",
+            f"https://{args.target}:{args.https_port}/api/auth/debug",
+            404,
+            args.timeout,
+        ),
+        request_case(
+            "seller_profile_requires_auth",
+            "GET",
+            f"https://{args.target}:{args.https_port}/api/seller/profile",
+            401,
+            args.timeout,
+        ),
+        request_case(
+            "seller_unknown_route_closed",
+            "GET",
+            f"https://{args.target}:{args.https_port}/api/seller/internal",
+            404,
+            args.timeout,
+        ),
     ]
 
     result = {
