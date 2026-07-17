@@ -27,6 +27,8 @@ Docker Compose を使って、公開用の DMZ、非公開の Application 層、
   - `audit_events` を使った NIDS 相当の認証異常検知の整理
 - [hids/README.md](/home/buchi/WebProgramming-ActiveLearner/hids/README.md)
   - `fastapi-app` ホスト相当で見る HIDS/HIPS シグナルの整理
+- [security-monitoring-addition.md](/home/buchi/WebProgramming-ActiveLearner/security-monitoring-addition.md)
+  - HIDS / HIPS / NIDS を追加した判断、実装内容、検証結果、制約の記録
 
 ## 最終的に目指す構成
 
@@ -174,7 +176,8 @@ end
 - `API Gateway`
   - `fastapi-app` から独立させる候補
 - `NIDS`, `HIDS/HIPS`
-  - 通信本線ではなく監視レイヤーとして追加する候補
+  - 通信本線ではなく監視レイヤーとして追加
+  - `nids` はネットワーク境界のログを横から読み、`hids-hips` は `fastapi-app` ホスト相当を監視する
 
 ## 報告書で説明すべき要点
 
@@ -287,11 +290,11 @@ Client
   - 現在は `fastapi-app` 内で API を直接提供している
   - 将来的に認証認可、API versioning、API 単位の rate limit を分離する候補
 - `NIDS`
-  - 現段階では `audit_events` と `/api/security/monitoring/summary` で認証異常を検知する
-  - 将来的には通信本線ではなく、横から観測する独立監視レイヤーとして追加する候補
+  - `audit_events` と `/api/security/monitoring/summary` で認証異常を検知する
+  - 追加で `nids` コンテナが network boundary のログを横から読み、`logs/nids/alerts.log` に検知結果を残す
 - `HIDS/HIPS`
-  - 現段階では `fastapi-app` のログインロック、refresh token 失効、監査イベントを保護シグナルとして扱う
-  - 将来的にはホスト監視・保護として独立させる候補
+  - `fastapi-app` のログインロック、refresh token 失効、監査イベントを保護シグナルとして扱う
+  - 追加で `hids-hips` コンテナが FastAPI ソースの改ざん検知と内部ヘルスチェックを行い、`logs/hids/alerts.log` に検知結果を残す
 
 ## 起動
 
@@ -325,6 +328,10 @@ docker compose up -d --build
   - admin / support 向けの監査イベント確認
 - `GET /api/security/monitoring/summary`
   - admin / support 向けの NIDS/HIDS 相当シグナル集計
+- `logs/nids/alerts.log`
+  - `nids` コンテナが出力するネットワーク境界ログ由来のアラート
+- `logs/hids/alerts.log`
+  - `hids-hips` コンテナが出力するアプリホスト相当の改ざん・ヘルスチェックアラート
 
 ```bash
 curl -i http://127.0.0.1/health
@@ -344,6 +351,8 @@ curl -k -i https://127.0.0.1/api/health
 | `audit_events` の活用 | `audit_events.severity`, `audit_events.details`, 認証イベント保存 | [fastapi/README.md](/home/buchi/WebProgramming-ActiveLearner/fastapi/README.md), [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) |
 | NIDS 相当の検知 | `/api/security/monitoring/summary`, `audit_events` 集計 | [nids/README.md](/home/buchi/WebProgramming-ActiveLearner/nids/README.md) |
 | HIDS/HIPS 相当の保護 | アカウントロック、refresh token 失効、監査閲覧 | [hids/README.md](/home/buchi/WebProgramming-ActiveLearner/hids/README.md) |
+| NIDS 独立センサー | `nids` コンテナ、境界ログ監視、`logs/nids/alerts.log` | [nids/README.md](/home/buchi/WebProgramming-ActiveLearner/nids/README.md) |
+| HIDS/HIPS 独立センサー | `hids-hips` コンテナ、FastAPI 改ざん検知、`logs/hids/alerts.log` | [hids/README.md](/home/buchi/WebProgramming-ActiveLearner/hids/README.md) |
 | WAF 許可ルート追加 | `/api/auth/refresh`, `/api/auth/logout`, audit / security API の許可 | [waf/README.md](/home/buchi/WebProgramming-ActiveLearner/waf/README.md) |
 | 検証スクリプト拡張 | refresh rotation、古い token 拒否、audit 確認、DB 平文混入確認 | [other/test/auth-crypto/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/auth-crypto/README.md) |
 

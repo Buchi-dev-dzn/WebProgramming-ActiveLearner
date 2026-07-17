@@ -45,8 +45,8 @@ graph TD
       end
     end
 
-    NIDS[NIDS<br/>planned]
-    HIDS[HIDS / HIPS<br/>planned]
+    NIDS[NIDS<br/>log sensor]
+    HIDS[HIDS / HIPS<br/>host sensor]
   end
 
   HostPorts --> FW1 --> NIPS --> WAF --> RP --> FW2
@@ -55,9 +55,9 @@ graph TD
   APIGW -.planned route.-> Back
   Back --> DB
 
-  NIDS -.monitor planned.-> NIPS
-  NIDS -.monitor planned.-> FW2
-  HIDS -.host monitor planned.-> Back
+  NIDS -.monitor logs.-> NIPS
+  NIDS -.monitor logs.-> FW2
+  HIDS -.host monitor.-> Back
 ```
 
 ## この図の読み方
@@ -179,9 +179,11 @@ Client
   - 現在は `fastapi-app` の前段に未分離
   - 将来的には独立コンテナ化して、認証認可や API 単位の制御を分離する
 - `NIDS`
-  - 本線上ではなく、監視専用として横から観測する想定
+  - 本線上ではなく、監視専用として横からログを観測する
+  - `nids` コンテナが external firewall / WAF / reverse proxy / internal firewall のログを読み、`logs/nids/alerts.log` にアラートを残す
 - `HIDS / HIPS`
-  - `fastapi-app` ホスト相当の監視・保護として追加する想定
+  - `fastapi-app` ホスト相当の監視・保護として追加する
+  - `hids-hips` コンテナが FastAPI ソースの改ざん検知と内部ヘルスチェックを行い、`logs/hids/alerts.log` にアラートを残す
 
 ## Docker に依存している部分
 

@@ -2,7 +2,7 @@
 
 `HIDS` は `Host Intrusion Detection System`、`HIPS` は `Host Intrusion Prevention System` の略です。
 
-今回の構成では、`fastapi-app` をアプリケーションホスト相当として扱い、ホスト内部で見える認証状態や token 状態を `audit_events` に残します。
+今回の構成では、`fastapi-app` をアプリケーションホスト相当として扱い、ホスト内部で見える認証状態や token 状態を `audit_events` に残します。追加で `hids-hips` コンテナを置き、FastAPI ソースの改ざん検知と内部ヘルスチェックを行います。
 
 ## 現在の実装
 
@@ -11,6 +11,9 @@
 - refresh token を `refresh_tokens` に HMAC hash として保存する
 - refresh token のローテーションと logout 時の失効を記録する
 - 本人用 `/api/auth/audit-events` と管理者用 `/api/security/audit-events` で監査イベントを確認する
+- `hids-hips` コンテナが `fastapi/app` を読み取り専用で監視する
+- `hids-hips` コンテナが `fastapi-app:8000/api/health` を内部ネットワークから確認する
+- 検知結果を `logs/hids/alerts.log` に JSON Lines で保存する
 
 ## HIDS/HIPS として見るシグナル
 
@@ -18,6 +21,20 @@
 - refresh token の再利用拒否
 - logout による refresh token 失効
 - 権限付き監査 API へのアクセス
+- FastAPI ソースファイルの作成・削除・変更
+- 内部ヘルスチェック失敗
+
+## HIDS と HIPS の分担
+
+- `HIDS`
+  - `hids-hips` コンテナによるファイル改ざん検知とヘルスチェック
+  - `audit_events` による認証・監査イベントの可視化
+- `HIPS`
+  - FastAPI 側のアカウントロック
+  - refresh token ローテーション済み token の再利用拒否
+  - logout 済み refresh token の拒否
+
+Docker 学習環境では、OS カーネルレベルのプロセス強制停止や syscall 制御までは再現していません。そのため HIPS は、アプリケーション内部での拒否制御として実装しています。
 
 ## 実運用での発展形
 

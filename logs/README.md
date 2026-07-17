@@ -12,11 +12,15 @@
   - internal firewall のアクセスログとエラーログ
 - `postgres/`
   - PostgreSQL 関連ログの保存先として確保
+- `nids/`
+  - NIDS センサーの検知結果
+- `hids/`
+  - HIDS/HIPS センサーの検知結果
 
 ## 補足
 
 - `application/`, `backend/` は旧構成のログ置き場として残しています
-- 現在の構成で主に使うのは `external-firewall/`, `nginx/`, `internal-firewall/`, `postgres/` です
+- 現在の構成で主に使うのは `external-firewall/`, `waf/`, `nginx/`, `internal-firewall/`, `postgres/`, `nids/`, `hids/` です
 
 ## 目的
 

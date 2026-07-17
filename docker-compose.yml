@@ -90,6 +90,49 @@ services:
       db_net:
     restart: unless-stopped
 
+  nids:
+    build:
+      context: .
+      dockerfile: nids/Dockerfile
+    environment:
+      NIDS_SOURCE_DIR: /sources
+      NIDS_ALERT_PATH: /alerts/alerts.log
+      NIDS_SCAN_INTERVAL_SECONDS: 5
+    volumes:
+      - ./logs/external-firewall:/sources/external-firewall:ro
+      - ./logs/waf:/sources/waf:ro
+      - ./logs/nginx:/sources/reverse-proxy:ro
+      - ./logs/internal-firewall:/sources/internal-firewall:ro
+      - ./logs/nids:/alerts
+    depends_on:
+      - external-firewall
+      - nips
+      - waf
+      - reverse-proxy
+      - internal-firewall
+    networks:
+      - edge_net
+      - app_net
+    restart: unless-stopped
+
+  hids-hips:
+    build:
+      context: .
+      dockerfile: hids/Dockerfile
+    environment:
+      HIDS_WATCH_DIR: /watch/fastapi-app
+      HIDS_ALERT_PATH: /alerts/alerts.log
+      HIDS_HEALTH_URL: http://fastapi-app:8000/api/health
+      HIDS_SCAN_INTERVAL_SECONDS: 10
+    volumes:
+      - ./fastapi/app:/watch/fastapi-app:ro
+      - ./logs/hids:/alerts
+    depends_on:
+      - fastapi-app
+    networks:
+      - api_net
+    restart: unless-stopped
+
   postgres:
     image: postgres:16-alpine
     environment:
