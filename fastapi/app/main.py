@@ -32,6 +32,7 @@ REFRESH_TOKEN_SECONDS = 60 * 60 * 24 * 14
 MAX_FAILED_LOGINS = 5
 LOGIN_LOCKOUT_SECONDS = 15 * 60
 MAX_AUDIT_LIMIT = 100
+SECURITY_SENSOR_TOKEN = os.environ.get("SECURITY_SENSOR_TOKEN")
 db_pool: asyncpg.Pool | None = None
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -74,6 +75,15 @@ class SellerProfileUpsert(BaseModel):
     phone: str | None = Field(default=None, min_length=5, max_length=40)
     business_address: str | None = Field(default=None, min_length=1, max_length=1000)
     payout_account_token: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class SecuritySensorEvent(BaseModel):
+    component: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9._-]+$")
+    action: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9._-]+$")
+    severity: str = Field(default="info", pattern=r"^(info|warning|critical)$")
+    target_type: str | None = Field(default=None, max_length=80)
+    target_id: str | None = Field(default=None, max_length=200)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 def product_to_dict(record: asyncpg.Record) -> dict[str, Any]:
@@ -376,6 +386,32 @@ async def insert_audit_event(
         user_agent_summary(request),
         severity,
         json.dumps(details or {}),
+    )
+
+
+async def insert_sensor_event(
+    connection: asyncpg.Connection,
+    payload: SecuritySensorEvent,
+    request_id: str | None = None,
+) -> None:
+    await connection.execute(
+        """
+        INSERT INTO audit_events (
+            action,
+            target_type,
+            target_id,
+            request_id,
+            severity,
+            details
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        """,
+        payload.action,
+        payload.target_type,
+        payload.target_id,
+        request_id,
+        payload.severity,
+        json.dumps({"component": payload.component, **payload.details}),
     )
 
 
@@ -1011,6 +1047,25 @@ async def security_monitoring_summary(
             LIMIT 20
             """
         )
+        sensor_records = await connection.fetch(
+            """
+            SELECT
+                COALESCE(details->>'component', 'unknown') AS component,
+                action,
+                severity,
+                count(*) AS count,
+                max(created_at) AS last_seen_at
+            FROM audit_events
+            WHERE created_at >= now() - interval '24 hours'
+              AND (
+                  action LIKE 'nids_%'
+                  OR action LIKE 'hids_%'
+                  OR action = 'sensor_heartbeat'
+              )
+            GROUP BY COALESCE(details->>'component', 'unknown'), action, severity
+            ORDER BY component, count DESC, action
+            """
+        )
     return {
         "window": "24h",
         "nips": {
@@ -1018,16 +1073,22 @@ async def security_monitoring_summary(
             "source": "haproxy at external-firewall -> nips -> waf",
         },
         "nids": {
-            "status": "audit-log-backed",
+            "status": "log-sensor-and-audit-log-backed",
             "signals": [
+                "nids_signature_match",
+                "nids_source_read_failed",
                 "auth_login_failed",
                 "auth_login_blocked",
                 "auth_refresh_failed",
             ],
         },
         "hids": {
-            "status": "application-host-backed",
+            "status": "host-sensor-and-application-host-backed",
             "signals": [
+                "hids_file_created",
+                "hids_file_modified",
+                "hids_file_deleted",
+                "hids_health_unreachable",
                 "account lockout state",
                 "refresh token revocation",
                 "privileged audit access",
@@ -1041,9 +1102,46 @@ async def security_monitoring_summary(
             }
             for record in records
         ],
+        "sensor_counts": [
+            {
+                "component": record["component"],
+                "action": record["action"],
+                "severity": record["severity"],
+                "count": record["count"],
+                "last_seen_at": record["last_seen_at"].isoformat(),
+            }
+            for record in sensor_records
+        ],
         "recent_warnings": [audit_event_to_dict(record) for record in recent_warnings],
         "request_id": extract_request_id(request),
     }
+
+
+@app.post("/api/internal/security-events", status_code=202)
+async def ingest_security_sensor_event(
+    payload: SecuritySensorEvent,
+    request: Request,
+    x_sensor_token: str | None = Header(default=None),
+):
+    if not SECURITY_SENSOR_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "security_sensor_token_not_configured"},
+        )
+    if not x_sensor_token or not hmac.compare_digest(
+        x_sensor_token,
+        SECURITY_SENSOR_TOKEN,
+    ):
+        raise HTTPException(status_code=401, detail={"error": "invalid_sensor_token"})
+
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        await insert_sensor_event(
+            connection,
+            payload,
+            request_id=extract_request_id(request),
+        )
+    return {"accepted": True, "request_id": extract_request_id(request)}
 
 
 @app.get("/api/seller/profile")

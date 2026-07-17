@@ -80,6 +80,7 @@ services:
       JWT_SECRET_KEY_B64: "yZgC+H8/qddXnBGJK9JPMWlX9Q7a2ZeRYbgMC84AS0U="
       DATA_ENCRYPTION_KEY_B64: "dwRZKYwS/C7pjAsT5hTxTEeBvt5xY3BmAezwguX1xIo="
       EMAIL_LOOKUP_KEY_B64: "H2nQK3mmpz5gZTS3M0Yp5JUoNCapunuPabaB/cyd0F4="
+      SECURITY_SENSOR_TOKEN: "dev-security-sensor-token"
     depends_on:
       - postgres
     expose:
@@ -97,7 +98,10 @@ services:
     environment:
       NIDS_SOURCE_DIR: /sources
       NIDS_ALERT_PATH: /alerts/alerts.log
+      NIDS_STATE_PATH: /alerts/state.json
       NIDS_SCAN_INTERVAL_SECONDS: 5
+      NIDS_INGEST_URL: http://fastapi-app:8000/api/internal/security-events
+      SECURITY_SENSOR_TOKEN: "dev-security-sensor-token"
     volumes:
       - ./logs/external-firewall:/sources/external-firewall:ro
       - ./logs/waf:/sources/waf:ro
@@ -113,6 +117,7 @@ services:
     networks:
       - edge_net
       - app_net
+      - api_net
     restart: unless-stopped
 
   hids-hips:
@@ -122,8 +127,11 @@ services:
     environment:
       HIDS_WATCH_DIR: /watch/fastapi-app
       HIDS_ALERT_PATH: /alerts/alerts.log
+      HIDS_BASELINE_PATH: /alerts/baseline.json
       HIDS_HEALTH_URL: http://fastapi-app:8000/api/health
       HIDS_SCAN_INTERVAL_SECONDS: 10
+      HIDS_INGEST_URL: http://fastapi-app:8000/api/internal/security-events
+      SECURITY_SENSOR_TOKEN: "dev-security-sensor-token"
     volumes:
       - ./fastapi/app:/watch/fastapi-app:ro
       - ./logs/hids:/alerts
