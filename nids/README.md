@@ -12,6 +12,8 @@
   - `nids` コンテナが network boundary のログを横から読む
   - 疑わしい HTTP status、攻撃文字列、scanner User-Agent などを検知する
   - 検知結果を `logs/nids/alerts.log` に JSON Lines で保存する
+  - 検知結果を `POST /api/internal/security-events` に送信し、`audit_events` にも保存する
+  - ログ offset を `logs/nids/state.json` に保存し、再起動後の重複検知を抑える
   - `audit_events` の warning 系イベントも集計する
   - `/api/security/monitoring/summary` で直近 24 時間の異常シグナルを見る
 
@@ -34,7 +36,7 @@
 
 ## Docker 上の配置
 
-`nids` は通信本線には入れません。`edge_net` と `app_net` には接続しますが、`ports` は持たせず外部公開しません。
+`nids` は通信本線には入れません。`edge_net`, `app_net`, `api_net` には接続しますが、`ports` は持たせず外部公開しません。`api_net` は `fastapi-app` の内部 ingest API に検知結果を送るために使います。
 
 ```text
 Client -> external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall -> fastapi-app
@@ -43,6 +45,20 @@ Client -> external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall
 ```
 
 この構成は、実運用の SPAN / traffic mirror を完全再現するものではありません。学習用環境では「本線を止めない監視専用 IDS」という責務を、ログ監視として再現しています。
+
+## 保存されるイベント
+
+`audit_events.action` には次のような値を保存します。
+
+- `nids_block_status`
+- `nids_sql_injection_probe`
+- `nids_xss_probe`
+- `nids_sensitive_path_probe`
+- `nids_scanner_user_agent`
+- `nids_source_read_failed`
+- `sensor_heartbeat`
+
+`details.component` は `nids` になります。これにより、`/api/security/monitoring/summary` の `sensor_counts` で NIDS 由来の検知を確認できます。
 
 ## 実運用での発展形
 

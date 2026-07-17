@@ -332,6 +332,8 @@ docker compose up -d --build
   - `nids` コンテナが出力するネットワーク境界ログ由来のアラート
 - `logs/hids/alerts.log`
   - `hids-hips` コンテナが出力するアプリホスト相当の改ざん・ヘルスチェックアラート
+- `GET /api/security/monitoring/summary`
+  - `sensor_counts` に NIDS / HIDS / HIPS センサーから `audit_events` に入った検知件数を返す
 
 ```bash
 curl -i http://127.0.0.1/health

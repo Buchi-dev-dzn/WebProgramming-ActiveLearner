@@ -114,6 +114,7 @@ services:
       - waf
       - reverse-proxy
       - internal-firewall
+      - fastapi-app
     networks:
       - edge_net
       - app_net

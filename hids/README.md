@@ -14,6 +14,8 @@
 - `hids-hips` コンテナが `fastapi/app` を読み取り専用で監視する
 - `hids-hips` コンテナが `fastapi-app:8000/api/health` を内部ネットワークから確認する
 - 検知結果を `logs/hids/alerts.log` に JSON Lines で保存する
+- 検知結果を `POST /api/internal/security-events` に送信し、`audit_events` にも保存する
+- baseline を `logs/hids/baseline.json` に保存し、再起動後も継続して比較する
 
 ## HIDS/HIPS として見るシグナル
 
@@ -35,6 +37,19 @@
   - logout 済み refresh token の拒否
 
 Docker 学習環境では、OS カーネルレベルのプロセス強制停止や syscall 制御までは再現していません。そのため HIPS は、アプリケーション内部での拒否制御として実装しています。
+
+## 保存されるイベント
+
+`audit_events.action` には次のような値を保存します。
+
+- `hids_file_created`
+- `hids_file_modified`
+- `hids_file_deleted`
+- `hids_health_degraded`
+- `hids_health_unreachable`
+- `sensor_heartbeat`
+
+`details.component` は `hids-hips` になります。これにより、`/api/security/monitoring/summary` の `sensor_counts` で HIDS/HIPS 由来の検知を確認できます。
 
 ## 実運用での発展形
 

@@ -31,13 +31,16 @@ HIDS はファイル改ざん検知とヘルスチェック、HIPS は FastAPI �
 
 - 通信本線には入らない
 - `ports` を持たないため外部公開されない
-- `edge_net` と `app_net` に接続する
+- `edge_net`, `app_net`, `api_net` に接続する
+- `api_net` 経由で `fastapi-app` の内部 ingest API に検知結果を送信する
 - 次のログを読み取り専用で監視する
   - `logs/external-firewall`
   - `logs/waf`
   - `logs/nginx`
   - `logs/internal-firewall`
 - 検知結果を `logs/nids/alerts.log` に JSON Lines で出力する
+- 検知結果を `fastapi-app` の内部 API に送信し、PostgreSQL の `audit_events` にも保存する
+- 読み取り位置を `logs/nids/state.json` に保存し、再起動後の重複読み取りを抑える
 
 検知対象は次です。
 
@@ -57,6 +60,8 @@ HIDS はファイル改ざん検知とヘルスチェック、HIPS は FastAPI �
 - `fastapi/app` を読み取り専用で監視する
 - `fastapi-app:8000/api/health` を内部ネットワークから確認する
 - 検知結果を `logs/hids/alerts.log` に JSON Lines で出力する
+- 検知結果を `fastapi-app` の内部 API に送信し、PostgreSQL の `audit_events` にも保存する
+- ファイル baseline を `logs/hids/baseline.json` に保存し、再起動後も前回 baseline と比較する
 
 HIDS として見るものは次です。
 
@@ -80,14 +85,23 @@ HIPS として見るものは次です。
   - NIDS センサー用 Python コンテナ
 - `nids/monitor.py`
   - 境界ログを読み、疑わしい行を `logs/nids/alerts.log` に出力する
+  - `NIDS_INGEST_URL` に検知イベントを送信する
+  - `NIDS_STATE_PATH` にログ offset を保存する
 - `hids/Dockerfile`
   - HIDS/HIPS センサー用 Python コンテナ
 - `hids/monitor.py`
   - FastAPI ソースの SHA-256 baseline を作り、変更を検知する
   - 内部ヘルスチェックも実行する
+  - `HIDS_INGEST_URL` に検知イベントを送信する
+  - `HIDS_BASELINE_PATH` に baseline を保存する
 - `docker-compose.yml`
   - `nids` サービスを追加
   - `hids-hips` サービスを追加
+  - `SECURITY_SENSOR_TOKEN` による内部 API 認証を追加
+- `fastapi/app/main.py`
+  - `POST /api/internal/security-events` を追加
+  - センサーイベントを `audit_events` に保存する
+  - `/api/security/monitoring/summary` に `sensor_counts` を追加
 - `logs/nids/.gitkeep`
   - NIDS アラート出力先を保持
 - `logs/hids/.gitkeep`
@@ -128,18 +142,39 @@ HIPS として見るものは次です。
 | HIDS / HIPS | `hids-hips` + FastAPI 側の拒否制御 | 追加済み |
 | API Gateway | 未分離 | 今後の候補 |
 
+## センサーイベントの保存先
+
+本格実装版では、センサーの検知結果を二重に残します。
+
+1. ローカルログ
+   - `logs/nids/alerts.log`
+   - `logs/hids/alerts.log`
+2. PostgreSQL
+   - `audit_events`
+   - `action` は `nids_*`, `hids_*`, `sensor_heartbeat`
+   - `details.component` に `nids` または `hids-hips` を保存
+
+FastAPI には内部専用の ingest API を追加しています。
+
+```text
+POST /api/internal/security-events
+Header: X-Sensor-Token: <SECURITY_SENSOR_TOKEN>
+```
+
+この API は `SECURITY_SENSOR_TOKEN` が一致した場合だけイベントを受け付けます。Docker Compose では学習用の固定値 `dev-security-sensor-token` を使っています。本番では secret manager や `.env` で差し替える前提です。
+
 ## 検証記録
 
 実行済みの確認は次です。
 
 ```bash
-python3 -m py_compile nids/monitor.py hids/monitor.py
+python3 -m py_compile nids/monitor.py hids/monitor.py fastapi/app/main.py
 docker compose config
 ```
 
 結果:
 
-- `nids/monitor.py` と `hids/monitor.py` の Python 構文チェックは成功
+- `nids/monitor.py`, `hids/monitor.py`, `fastapi/app/main.py` の Python 構文チェックは成功
 - `docker compose config` は成功
 - `docker-compose.yml` とネットワーク、volume、depends_on の構文は解決できている
 
