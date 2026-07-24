@@ -54,7 +54,7 @@ environment:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
-    allow_credentials=False,
+        allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
     expose_headers=["X-Request-Id"],
@@ -67,13 +67,13 @@ app.add_middleware(
 | 設定 | 内容 |
 | --- | --- |
 | `allow_origins` | 通信を許可するフロントエンドのオリジン |
-| `allow_credentials=False` | Cookieなどのcredential付きCORS通信を許可しない |
+| `allow_credentials=True` | refresh tokenのHttpOnly Cookieを送受信できるようにする |
 | `allow_methods` | CORSで許可する実APIのHTTPメソッド |
 | `allow_headers` | ブラウザから送信してよいリクエストヘッダー |
 | `expose_headers` | JavaScriptから読み取ってよいレスポンスヘッダー |
 | `max_age=600` | プリフライト結果をブラウザが最大10分キャッシュできる |
 
-現在の認証はCookieではなく`Authorization: Bearer ...`を使うため、`allow_credentials`は`False`です。将来refresh tokenをCookieへ移す場合は、Cookie属性、CSRF対策、`allow_credentials`をまとめて再設計する必要があります。
+現在の認証はaccess tokenを`Authorization: Bearer ...`で送り、refresh tokenをHttpOnly Cookieで管理します。そのため、`allow_credentials`は`True`です。許可オリジンにワイルドカードは使用できず、信頼するフロントエンドURLを明示します。
 
 ## 4. プリフライトリクエスト
 
@@ -113,6 +113,7 @@ POST /api/internal/security-events
 ```javascript
 const response = await fetch("http://192.168.64.4/api/auth/login", {
   method: "POST",
+  credentials: "include",
   headers: {
     "Content-Type": "application/json",
   },
@@ -129,10 +130,13 @@ if (!response.ok) {
 const session = await response.json();
 ```
 
+ただし、`localhost`からVMのIPへ直接接続するとcross-siteになるため、開発用の`SameSite=Lax` Cookieを使ったrefresh認証には適しません。現在のReact開発構成ではVite proxyを使い、ブラウザからは`fetch("/api/...")`で接続してください。上の直接接続例はCORSヘッダーの確認用途です。
+
 access tokenを送る例:
 
 ```javascript
 const response = await fetch("http://192.168.64.4/api/auth/me", {
+  credentials: "include",
   headers: {
     Authorization: `Bearer ${accessToken}`,
   },
@@ -183,7 +187,7 @@ docker compose up -d --force-recreate waf
 
 公開範囲が不必要に広くなり、意図しないWebサイトからAPIを呼び出せるためです。開発環境でも、実際に使用するフロントエンドのオリジンだけを列挙します。
 
-CORSで許可したサイトからであっても、権限が必要なAPIではaccess tokenの検証が引き続き行われます。
+CORSで許可したサイトからであっても、権限が必要なAPIではaccess tokenの検証が引き続き行われます。credential付きCORSではワイルドカードオリジンを使用できません。
 
 ## 8. 動作確認
 

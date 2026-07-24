@@ -82,6 +82,8 @@ services:
       EMAIL_LOOKUP_KEY_B64: "H2nQK3mmpz5gZTS3M0Yp5JUoNCapunuPabaB/cyd0F4="
       SECURITY_SENSOR_TOKEN: "dev-security-sensor-token"
       CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
+      REFRESH_COOKIE_SECURE: "false"
+      REFRESH_COOKIE_SAMESITE: "lax"
     depends_on:
       - postgres
     expose:

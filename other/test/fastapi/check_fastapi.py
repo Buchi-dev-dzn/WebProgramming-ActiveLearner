@@ -141,6 +141,37 @@ def main() -> None:
     ]
 
     if not args.expect_degraded_health:
+        auth_register_case = request_json_case(
+            "auth_register_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/auth/register",
+            201,
+            timeout,
+            {
+                "email": user_email,
+                "password": user_password,
+                "role": "seller",
+            },
+        )
+        auth_login_case = request_json_case(
+            "auth_login_status",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/auth/login",
+            200,
+            timeout,
+            {
+                "email": user_email,
+                "password": user_password,
+            },
+        )
+        cases.extend([auth_register_case, auth_login_case])
+        try:
+            login_payload = json.loads(auth_login_case.detail)
+            token = login_payload.get("access_token")
+        except (json.JSONDecodeError, AttributeError):
+            token = None
+        auth_headers = {"Authorization": f"Bearer {token}"} if token else {}
+
         create_case = request_json_case(
             "product_create_status",
             "POST",
@@ -153,6 +184,7 @@ def main() -> None:
                 "price_cents": 1299,
                 "stock": 7,
             },
+            headers=auth_headers,
         )
         get_case = request_case(
             "product_get_status",
@@ -170,6 +202,7 @@ def main() -> None:
                 "sku": product_sku,
                 "stock": 3,
             },
+            headers=auth_headers,
         )
         list_case = request_case(
             "product_list_status",
@@ -198,31 +231,6 @@ def main() -> None:
             )
         except json.JSONDecodeError:
             product_shape_ok = False
-
-        auth_register_case = request_json_case(
-            "auth_register_status",
-            "POST",
-            f"https://{args.target}:{args.https_port}/api/auth/register",
-            201,
-            timeout,
-            {
-                "email": user_email,
-                "password": user_password,
-                "role": "seller",
-            },
-        )
-        auth_login_case = request_json_case(
-            "auth_login_status",
-            "POST",
-            f"https://{args.target}:{args.https_port}/api/auth/login",
-            200,
-            timeout,
-            {
-                "email": user_email,
-                "password": user_password,
-            },
-        )
-        cases.extend([auth_register_case, auth_login_case])
 
         try:
             register_payload = json.loads(auth_register_case.detail)

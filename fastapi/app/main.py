@@ -14,7 +14,7 @@ from typing import Any
 import asyncpg
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import Cookie, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
@@ -39,6 +39,16 @@ CORS_ALLOWED_ORIGINS = [
     for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
+REFRESH_COOKIE_NAME = os.environ.get("REFRESH_COOKIE_NAME", "refresh_token")
+REFRESH_COOKIE_SECURE = (
+    os.environ.get("REFRESH_COOKIE_SECURE", "true").strip().lower() == "true"
+)
+REFRESH_COOKIE_SAMESITE = os.environ.get(
+    "REFRESH_COOKIE_SAMESITE",
+    "lax",
+).strip().lower()
+if REFRESH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    raise RuntimeError("REFRESH_COOKIE_SAMESITE must be lax, strict, or none")
 db_pool: asyncpg.Pool | None = None
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -64,14 +74,6 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=256)
-
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str = Field(min_length=32, max_length=512)
-
-
-class LogoutRequest(BaseModel):
-    refresh_token: str = Field(min_length=32, max_length=512)
 
 
 class SellerProfileUpsert(BaseModel):
@@ -476,11 +478,33 @@ if CORS_ALLOWED_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ALLOWED_ORIGINS,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id"],
         max_age=600,
+    )
+
+
+def set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=REFRESH_TOKEN_SECONDS,
+        path="/api/auth",
+        secure=REFRESH_COOKIE_SECURE,
+        httponly=True,
+        samesite=REFRESH_COOKIE_SAMESITE,
+    )
+
+
+def delete_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path="/api/auth",
+        secure=REFRESH_COOKIE_SECURE,
+        httponly=True,
+        samesite=REFRESH_COOKIE_SAMESITE,
     )
 
 
@@ -618,7 +642,7 @@ async def register_user(payload: UserRegister, request: Request):
 
 
 @app.post("/api/auth/login")
-async def login_user(payload: UserLogin, request: Request):
+async def login_user(payload: UserLogin, request: Request, response: Response):
     email = normalize_email(payload.email)
     email_lookup_hash = lookup_hmac(email)
     pool = require_db_pool()
@@ -727,9 +751,9 @@ async def login_user(payload: UserLogin, request: Request):
             target_id=str(record["id"]),
         )
 
+    set_refresh_cookie(response, refresh_token)
     return {
         "access_token": create_access_token(updated["id"], updated["role"]),
-        "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_SECONDS,
         "refresh_expires_in": REFRESH_TOKEN_SECONDS,
@@ -739,9 +763,18 @@ async def login_user(payload: UserLogin, request: Request):
 
 
 @app.post("/api/auth/refresh")
-async def refresh_access_token(payload: RefreshTokenRequest, request: Request):
+async def refresh_access_token(
+    request: Request,
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    if not refresh_token:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "missing_refresh_token"},
+        )
     pool = require_db_pool()
-    incoming_hash = token_hmac(payload.refresh_token)
+    incoming_hash = token_hmac(refresh_token)
     refresh_failed = False
     failed_actor_user_id = None
     async with pool.acquire() as connection:
@@ -812,9 +845,9 @@ async def refresh_access_token(payload: RefreshTokenRequest, request: Request):
             )
 
     email = decrypt_text(record["email_ciphertext"], record["email_nonce"])
+    set_refresh_cookie(response, new_refresh_token)
     return {
         "access_token": create_access_token(record["user_id"], record["role"]),
-        "refresh_token": new_refresh_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_SECONDS,
         "refresh_expires_in": REFRESH_TOKEN_SECONDS,
@@ -825,24 +858,26 @@ async def refresh_access_token(payload: RefreshTokenRequest, request: Request):
 
 @app.post("/api/auth/logout")
 async def logout_user(
-    payload: LogoutRequest,
     request: Request,
+    response: Response,
     authorization: str | None = Header(default=None),
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
 ):
     user = await current_user_record(authorization)
     pool = require_db_pool()
     async with pool.acquire() as connection:
-        await connection.execute(
-            """
-            UPDATE refresh_tokens
-            SET revoked_at = now()
-            WHERE token_hash = $1
-              AND user_id = $2
-              AND revoked_at IS NULL
-            """,
-            token_hmac(payload.refresh_token),
-            user["id"],
-        )
+        if refresh_token:
+            await connection.execute(
+                """
+                UPDATE refresh_tokens
+                SET revoked_at = now()
+                WHERE token_hash = $1
+                  AND user_id = $2
+                  AND revoked_at IS NULL
+                """,
+                token_hmac(refresh_token),
+                user["id"],
+            )
         await insert_audit_event(
             connection,
             request,
@@ -851,6 +886,7 @@ async def logout_user(
             target_type="user",
             target_id=str(user["id"]),
         )
+    delete_refresh_cookie(response)
     return {"revoked": True, "request_id": extract_request_id(request)}
 
 
@@ -1217,7 +1253,12 @@ async def list_products(
 
 
 @app.post("/api/products", status_code=201)
-async def create_product(product: ProductCreate, request: Request):
+async def create_product(
+    product: ProductCreate,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    await require_role(authorization, {"seller", "admin"})
     pool = require_db_pool()
     async with pool.acquire() as connection:
         try:
@@ -1267,7 +1308,12 @@ async def get_product(
 
 
 @app.post("/api/product/stock")
-async def update_product_stock(update: ProductStockUpdate, request: Request):
+async def update_product_stock(
+    update: ProductStockUpdate,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    await require_role(authorization, {"seller", "admin"})
     pool = require_db_pool()
     async with pool.acquire() as connection:
         record = await connection.fetchrow(

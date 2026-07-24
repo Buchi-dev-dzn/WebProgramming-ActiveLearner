@@ -119,6 +119,7 @@ const API_BASE_URL = "/api";
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
@@ -169,10 +170,10 @@ const product = await apiRequest("/products", {
 ```text
 ユーザー登録
   -> ログイン
-  -> access tokenとrefresh tokenを受け取る
+  -> access tokenをレスポンスで受け取り、refresh tokenをCookieで受け取る
   -> access tokenをAuthorizationヘッダーに付ける
-  -> access token期限切れ時にrefreshする
-  -> ログアウト時にrefresh tokenを失効させる
+  -> access token期限切れ時にHttpOnly Cookieを使ってrefreshする
+  -> ログアウト時にサーバー上のrefresh tokenとCookieを失効させる
 ```
 
 access tokenの有効期間は15分、refresh tokenの有効期間は14日です。
@@ -214,7 +215,6 @@ const session = await apiRequest("/auth/login", {
 });
 
 const accessToken = session.access_token;
-const refreshToken = session.refresh_token;
 ```
 
 主なレスポンス:
@@ -222,7 +222,6 @@ const refreshToken = session.refresh_token;
 ```json
 {
   "access_token": "...",
-  "refresh_token": "...",
   "token_type": "bearer",
   "expires_in": 900,
   "refresh_expires_in": 1209600,
@@ -249,16 +248,12 @@ const me = await apiRequest("/auth/me", {
 ```javascript
 const refreshed = await apiRequest("/auth/refresh", {
   method: "POST",
-  body: JSON.stringify({
-    refresh_token: refreshToken,
-  }),
 });
 
 const newAccessToken = refreshed.access_token;
-const newRefreshToken = refreshed.refresh_token;
 ```
 
-refreshを実行するとrefresh tokenも新しくなります。古いrefresh tokenは再利用できないため、フロントエンド側で必ず新しい値に置き換えてください。
+refresh tokenはHttpOnly Cookieから自動送信され、新しいCookieへローテーションされます。JavaScriptからrefresh tokenを読み書きする必要はありません。
 
 ### 4.5 ログアウト
 
@@ -268,36 +263,26 @@ await apiRequest("/auth/logout", {
   headers: {
     Authorization: `Bearer ${accessToken}`,
   },
-  body: JSON.stringify({
-    refresh_token: refreshToken,
-  }),
 });
 ```
 
-ログアウト後は、フロントエンドが保持しているaccess tokenとrefresh tokenも削除します。
+ログアウト後は、フロントエンドがメモリに保持しているaccess tokenも削除します。refresh token CookieはAPIが削除します。
 
 ## 5. tokenの保存について
 
-現在のAPIはtokenをJSONレスポンスで返し、Cookieは設定しません。そのため、フロントエンド側で保存方法を決める必要があります。
+現在のAPIは、access tokenをJSONレスポンスで返し、refresh tokenをHttpOnly Cookieとして設定します。
 
-簡単な学習用実装では、JavaScriptのメモリ上に保持できます。
+access tokenはJavaScriptのメモリ上に保持します。
 
 ```javascript
 let session = {
   accessToken: null,
-  refreshToken: null,
 };
 ```
 
-ページ再読み込み後もログイン状態を維持するために`localStorage`へrefresh tokenを保存する方法もありますが、XSS発生時に読み取られる危険があります。
+ページを再読み込みしてaccess tokenが失われた場合は、`POST /api/auth/refresh`を呼び出して新しいaccess tokenを取得します。refresh tokenはHttpOnlyなので、JavaScriptや`localStorage`から読み取れません。
 
-本番向けには、次の方式への変更を推奨します。
-
-- refresh tokenを`HttpOnly`、`Secure`、`SameSite`付きCookieで管理する
-- access tokenは短時間だけメモリに保持する
-- Content Security Policyをフロントエンドに合わせて設計する
-
-現状のAPIはCookie認証を実装していないため、この方式にする場合はFastAPI側の変更が必要です。
+開発環境ではHTTPを使うためCookieの`Secure`属性を無効にしています。本番環境ではHTTPSを使用し、必ず`REFRESH_COOKIE_SECURE=true`へ変更します。
 
 ## 6. 商品API
 
@@ -320,6 +305,9 @@ const result = await apiRequest(`/product?sku=${sku}`);
 ```javascript
 const result = await apiRequest("/products", {
   method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+  },
   body: JSON.stringify({
     sku: "ITEM-001",
     name: "Sample Item",
@@ -334,6 +322,9 @@ const result = await apiRequest("/products", {
 ```javascript
 const result = await apiRequest("/product/stock", {
   method: "POST",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+  },
   body: JSON.stringify({
     sku: "ITEM-001",
     stock: 8,
@@ -341,7 +332,7 @@ const result = await apiRequest("/product/stock", {
 });
 ```
 
-現状では商品登録と在庫更新に認証・権限制御がありません。フロントエンドでボタンを非表示にするだけではセキュリティ対策にならないため、本格的に使用する前にFastAPI側でseller/admin権限を要求する必要があります。
+商品登録と在庫更新には、`seller`または`admin`のaccess tokenが必要です。フロントエンドの表示制御に加えて、FastAPI側でも権限を検証します。
 
 ## 7. 出品者プロフィールAPI
 
@@ -496,7 +487,7 @@ curl -k -i https://127.0.0.1/api/health
 2. フロントエンドをどのコンテナまたはホストで配信するか
 3. 開発中はVite等のproxyを使うか
 4. 本番相当では同一オリジンにするか、CORSの許可オリジンを本番URLに限定するか
-5. tokenを一時的にメモリへ置くか、Cookie認証へ変更するか
-6. 商品登録・在庫更新をseller/adminだけに制限するか
+5. 本番環境でCookieの`Secure`属性を有効にしたか
+6. 本番環境のCORS許可オリジンが本番URLだけに限定されているか
 
-現在の構成を維持するなら、まずは「Vite開発サーバの`/api` proxy + フロントエンドでは相対URL」という構成が最も簡単です。
+現在の確定方針は[REACT_FRONTEND_ARCHITECTURE.md](./REACT_FRONTEND_ARCHITECTURE.md)を参照してください。

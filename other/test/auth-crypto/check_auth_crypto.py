@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import http.cookiejar
 import json
 import shutil
 import ssl
@@ -57,6 +58,20 @@ def ssl_context() -> ssl.SSLContext:
     return context
 
 
+COOKIE_JAR = http.cookiejar.CookieJar()
+HTTP_OPENER = urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ssl_context()),
+    urllib.request.HTTPCookieProcessor(COOKIE_JAR),
+)
+
+
+def refresh_cookie_value() -> str | None:
+    for cookie in COOKIE_JAR:
+        if cookie.name == "refresh_token":
+            return cookie.value
+    return None
+
+
 def request_json(
     url: str,
     timeout: float,
@@ -77,10 +92,9 @@ def request_json(
         headers=request_headers,
     )
     try:
-        with urllib.request.urlopen(
+        with HTTP_OPENER.open(
             request,
             timeout=timeout,
-            context=ssl_context(),
         ) as response:
             body = response.read(8000).decode("utf-8", errors="replace").strip()
             return response.getcode(), parse_json(body), body, dict(response.headers.items())
@@ -198,7 +212,7 @@ def main() -> None:
         payload={"email": email, "password": password},
     )
     token = login_payload.get("access_token") if login_payload else None
-    refresh_token = login_payload.get("refresh_token") if login_payload else None
+    refresh_token = refresh_cookie_value()
     add_case(
         cases,
         "login_issues_jwt",
@@ -231,12 +245,9 @@ def main() -> None:
         f"{base}/api/auth/refresh",
         args.timeout,
         method="POST",
-        payload={"refresh_token": refresh_token},
     )
     refreshed_token = refresh_payload.get("access_token") if refresh_payload else None
-    refreshed_refresh_token = (
-        refresh_payload.get("refresh_token") if refresh_payload else None
-    )
+    refreshed_refresh_token = refresh_cookie_value()
     add_case(
         cases,
         "refresh_rotates_token",
@@ -254,7 +265,7 @@ def main() -> None:
         f"{base}/api/auth/refresh",
         args.timeout,
         method="POST",
-        payload={"refresh_token": refresh_token},
+        headers={"Cookie": f"refresh_token={refresh_token}"},
     )
     add_case(
         cases,
@@ -329,7 +340,6 @@ def main() -> None:
         f"{base}/api/auth/logout",
         args.timeout,
         method="POST",
-        payload={"refresh_token": refreshed_refresh_token or refresh_token},
         headers=auth_headers,
     )
     add_case(cases, "logout_revokes_refresh_token", logout_status == 200, logout_body)
