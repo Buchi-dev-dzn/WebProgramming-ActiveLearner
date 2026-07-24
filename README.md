@@ -11,7 +11,7 @@ EC / Marketplace 系サービスを題材に、外部公開入口、DMZ、Applic
 
 ## 現在の構成
 
-外部公開されるホストポートは `external-firewall` の `80/443` だけです。後段の `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` は Docker 内部ネットワーク上で直列に中継されます。
+外部公開されるホストポートは`external-firewall`のHTTPS用`443`だけです。HTTP用`80`は公開せず、後段の`nips`、`waf`、`reverse-proxy`、`internal-firewall`、`fastapi-app`、`postgres`はDocker内部ネットワーク上で直列に中継されます。
 
 ```text
 Client
@@ -36,7 +36,7 @@ hids-hips -> fastapi/app の改ざん検知と FastAPI ヘルスチェック
 ```mermaid
 graph TD
   Client[Client / Browser / Attacker]
-  Client --> FW1[external-firewall<br/>nginx stream<br/>host ports 80/443]
+  Client --> FW1[external-firewall<br/>nginx stream<br/>host port 443]
   FW1 --> NIPS[nips<br/>HAProxy inline IPS]
   NIPS --> WAF[waf<br/>nginx WAF / TLS]
   WAF --> RP[reverse-proxy<br/>DMZ]
@@ -59,9 +59,9 @@ graph TD
 
 | コンポーネント | 実装 | 役割 |
 | --- | --- | --- |
-| `external-firewall` | `nginx stream` | ホストに `80/443` を公開する唯一の入口。TCP を `nips` に転送する |
+| `external-firewall` | `nginx stream` | ホストにHTTPS用`443`を公開する唯一の入口。TLS通信を`nips`に転送する |
 | `nips` | `HAProxy` | inline IPS。接続数、リクエストレート、TLS ClientHello 異常を早い段階で遮断する |
-| `waf` | `nginx` | HTTP/HTTPS の WAF。危険な User-Agent、path/query、不要メソッド、未許可ルートを遮断する |
+| `waf` | `nginx` | TLSを終端するWAF。危険なUser-Agent、path/query、不要メソッド、未許可ルートを遮断する |
 | `reverse-proxy` | `nginx` | DMZ 相当の中継点。後段の internal firewall にだけ流す |
 | `internal-firewall` | `nginx` | 内部境界。`reverse-proxy` の固定 IP からの通信だけを受け、`/api/` だけ FastAPI に流す |
 | `fastapi-app` | FastAPI | 商品 API、認証 API、出品者プロフィール API、監査・監視 API を提供する |
@@ -132,11 +132,11 @@ docker compose up -d --build
 
 ```bash
 docker compose ps
-curl -i http://127.0.0.1/health
-curl -i http://127.0.0.1/api/health
-curl -i http://127.0.0.1/api/info
 curl -k -i https://127.0.0.1/api/health
+curl -k -i https://127.0.0.1/api/info
 ```
+
+外部公開ポートはHTTPS用の`443`だけです。HTTP用の`80`は公開せず、HTTPからHTTPSへのリダイレクトも行いません。開発用の自己署名証明書については、[waf/README.md](./waf/README.md)を参照してください。
 
 停止:
 

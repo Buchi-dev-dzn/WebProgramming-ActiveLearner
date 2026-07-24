@@ -9,7 +9,7 @@ graph TD
   Client[Client / Browser / Attacker]
   Internet[External Network]
   VMIP[Linux VM Entry<br/>192.168.64.4]
-  HostPorts[Host Published Ports<br/>80 / 443]
+  HostPorts[Host Published Port<br/>443]
 
   Client --> Internet --> VMIP --> HostPorts
 
@@ -65,7 +65,7 @@ graph TD
 - `Linux VM Entry 192.168.64.4`
   - VM 自体の入口です
   - 外部からの通信はまずこの IP に到達します
-- `Host Published Ports 80 / 443`
+- `Host Published Port 443`
   - Docker がホスト側で公開しているポートです
   - 今は `external-firewall` だけがホスト公開されています
 - `Docker 1` から `Docker 7`
@@ -74,11 +74,10 @@ graph TD
 ## 入口として外部公開されているのはどこか
 
 外部から見える入口は `Docker 1: external-firewall` だけです。  
-今回の Compose では、ホスト側に `ports` を持っているのはこのコンテナだけであり、公開されているのは `80/443` のみです。
+今回の Compose では、ホスト側に `ports` を持っているのはこのコンテナだけであり、公開されているのはHTTPS用の`443`のみです。
 
 つまり外部クライアントから到達できるのは次だけです。
 
-- `192.168.64.4:80`
 - `192.168.64.4:443`
 
 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` は Docker 内部ネットワーク上のノードであり、外部から直接到達させる設計にはしていません。
@@ -91,7 +90,7 @@ graph TD
 
 - `external-firewall`
   - `ports` を持つ
-  - ホスト側で `80/443` を公開する
+  - ホスト側でHTTPS用の`443`だけを公開する
 - `nips`
   - `ports` を持たない
   - Docker 内部ネットワークでのみ到達
@@ -110,7 +109,7 @@ graph TD
 
 ```text
 Client
-  -> 192.168.64.4:80/443
+  -> 192.168.64.4:443
   -> external-firewall
   -> nips
   -> waf
@@ -138,7 +137,7 @@ Client
 ```text
 Client
   -> Linux VM Entry (192.168.64.4)
-  -> Host published ports 80/443
+  -> Host published port 443
   -> external-firewall
   -> nips
   -> waf
@@ -287,7 +286,7 @@ Client
 例えば次のような制限をかけます。
 
 - Internet -> DMZ
-  - `80/443` のみ許可
+  - HTTPS用の`443`のみ許可
 - DMZ -> App
   - Reverse Proxy から App の必要ポートだけ許可
 - App -> DB
@@ -355,7 +354,7 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
 現状の構成では、
 
 - 外部公開
-  - `external-firewall` の `80/443` のみ
+  - `external-firewall` の `443`のみ
 - 内部限定
   - `nips`
   - `waf`
@@ -379,7 +378,7 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
 報告書では次のように整理すると誤解が少なくなります。
 
 1. 本来は別サーバで構成される各層を、1 台の Linux VM 上で Docker コンテナとして擬似再現している。
-2. 外部から直接到達できるのは VM の IP `192.168.64.4` 上で公開された `80/443` のみであり、その受け口は `external-firewall` だけである。
+2. 外部から直接到達できるのは VM の IP `192.168.64.4` 上で公開されたHTTPS用の`443`のみであり、その受け口は `external-firewall` だけである。
 3. `nips` と `waf` は独立した防御ノードとして存在するが、Docker 内部ネットワーク上の内部中継点であり、外部へ直接公開していない。
 4. `external-firewall` は Docker 内部 DNS を使って `nips` へ渡し、`nips` は `waf` へ、`waf` は `reverse-proxy` へ順に転送する。
 5. このため、設計思想としては多サーバ分離に噛み合っているが、物理的な完全分離ではなく、あくまで単一 VM 上の論理分離である。
@@ -388,4 +387,4 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
 
 報告書では、次のように説明できます。
 
-今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `80/443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` へ順に流れる。現在の FastAPI は商品 API、認証 API、JWT、出品者プロフィール API を持ち、PostgreSQL には `products`, `users`, `seller_profiles`, `audit_events` を保持している。未実装の `API Gateway`, `NIDS`, `HIDS/HIPS` は今後の拡張対象として位置づけている。
+今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` へ順に流れる。現在の FastAPI は商品 API、認証 API、JWT、出品者プロフィール API を持ち、PostgreSQL には `products`, `users`, `seller_profiles`, `audit_events` を保持している。未実装の `API Gateway`, `NIDS`, `HIDS/HIPS` は今後の拡張対象として位置づけている。

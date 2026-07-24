@@ -5,8 +5,14 @@
 ## この層の目的
 
 - 外部から見える入口を 1 か所に固定する
-- `80/443` の TCP 接続だけを後段に渡す
+- HTTPS用`443`のTCP接続だけを後段に渡す
 - `reverse-proxy` を host に直接公開せず、必ず `external-firewall` を通す
+
+## 現在のHTTPS限定方針
+
+現在の`docker-compose.yml`はホスト側へ`443`だけを公開し、`external-firewall/nginx.conf`も`443`だけをlistenします。HTTP用`80`は接続不能とし、HTTPSへのリダイレクトも提供しません。
+
+この文書の後半に残るHTTPコマンドは、HTTP/HTTPS併用時の過去の検証記録です。現在構成の疎通確認には`curl -k https://<VM_IP>/...`を使用してください。TLSはWAFで終端し、開発用自己署名証明書の詳細は[`waf/README.md`](../waf/README.md)を参照してください。
 
 本来の構成では、External Firewall はクラウド firewall、NW 機器、security group、host firewall などで実現するのが自然です。  
 今回は複数サーバーを用意できないため、Docker コンテナを使って「外周の入口サーバー」を擬似的に分けています。
@@ -33,15 +39,15 @@
 
 ### 1. 主実装: Docker 上の L4 gateway
 
-`external-firewall` コンテナは `nginx stream` を使い、`80/443` だけを listen して `reverse-proxy` に TCP 転送します。
+`external-firewall`コンテナは`nginx stream`を使い、HTTPS用`443`だけをlistenして`nips`へTCP転送します。
 
 これは次の意味を持ちます。
 
 - 外部から入る TCP の入口を 1 か所に固定する
 - `reverse-proxy` を host に直接公開させない
-- `80/443` に来た通信だけを後段へ渡す
+- `443`に来たTLS通信だけを後段へ渡す
 
-ここで重要なのは、これは「パケットを自由に drop する汎用 firewall」ではなく、`80/443` だけを受ける専用の L4 gateway だということです。
+ここで重要なのは、これは「パケットを自由にdropする汎用firewall」ではなく、`443`だけを受ける専用のL4 gatewayだということです。
 
 ### 2. 補助実装: host 側の packet filtering
 
@@ -61,7 +67,7 @@ Docker の publish port は forwarding や NAT を伴うため、`input` chain �
 - `nginx stream`
   - ユーザ空間で動く TCP gateway
   - 受けた接続を後段に流す
-  - 今回は `80/443` の入口分離を担当する
+  - 今回はHTTPS用`443`の入口分離を担当する
 - `nftables`
   - カーネル層の packet filtering
   - 条件に合わない通信を `drop` できる
@@ -88,10 +94,10 @@ Docker の publish port は forwarding や NAT を伴うため、`input` chain �
 
 ### 1. Docker 上の入口分離
 
-現行の Compose では、host に公開する `80/443` は `external-firewall` だけです。
+現行のComposeでは、hostに公開するHTTPS用`443`は`external-firewall`だけです。
 
 - `external-firewall`
-  - host で `80/443` を受ける
+  - hostで`443`を受ける
   - `nginx stream` で `reverse-proxy` に TCP 転送する
 - `reverse-proxy`
   - host に publish しない
@@ -129,7 +135,7 @@ Docker の publish port は forwarding や NAT を伴うため、`input` chain �
 
 ```text
 Client
-  -> host published port 80/443
+  -> host published port 443
   -> external-firewall (nginx stream)
   -> reverse-proxy
   -> internal-firewall
@@ -144,7 +150,7 @@ Client
 ### 完成していること
 
 - 外部公開の入口を `external-firewall` に集約した
-- `80/443` だけを listen する L4 gateway として分離した
+- `443`だけをlistenするL4 gatewayとして分離した
 - `reverse-proxy` を host 直公開から外した
 - 外周層と DMZ 層を別コンテナで表現した
 
@@ -158,7 +164,7 @@ Client
 ## ファイル
 
 - `nginx.conf`
-  - `80/443` を `reverse-proxy` に TCP 転送する L4 gateway 設定
+  - `443`を`nips`へTCP転送するL4 gateway設定
 - `apply-nft.sh`
   - host `input` chain に許可ポートを入れる補助スクリプト
 - `show-nft.sh`

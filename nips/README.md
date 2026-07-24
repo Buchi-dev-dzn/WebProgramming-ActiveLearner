@@ -21,6 +21,8 @@
 
 ルート README にある最終構成では、`NIPS` は `External Firewall` の後段、`WAF` の前段にあります。
 
+現在、外部公開される入口はHTTPS用`443`だけです。HAProxy設定内にHTTP用frontendが残っていても、External Firewallおよびホストからポート`80`へ到達する経路はありません。外部疎通確認は`https://`を使用し、TLS ClientHello検査を経由します。
+
 ```text
 Client
   -> External Firewall
@@ -185,7 +187,7 @@ Client
 
 ### 1. まず External Firewall から NIPS に届く
 
-最初に、公開入口である `External Firewall` が `80/443` のみを受けます。  
+最初に、公開入口である`External Firewall`がHTTPS用`443`のみを受けます。
 その後、許可された通信だけが `nips` コンテナへ転送されます。
 
 つまり `NIPS` は、外部から来る全 Web 通信の最初の検査地点です。
@@ -319,7 +321,7 @@ Client
 
 報告書では、次のように書くと整理しやすいです。
 
-`NIPS` は `HAProxy` を用いた inline proxy として実装し、External Firewall を通過した 80/443 の通信を最初に受ける。HTTP では送信元ごとの接続レート・同時接続数・リクエスト数を監視し、閾値超過時は `429` を返して遮断する。HTTPS では TCP/TLS の入口で接続異常と TLS ClientHello 妥当性を確認し、不自然な通信を拒否する。正常な通信のみを後段の `WAF` に渡すことで、`NIPS` は広域的な侵入防止層、`WAF` は Web アプリケーション向けの詳細防御層として役割分担している。
+`NIPS`は`HAProxy`を用いたinline proxyとして実装し、External Firewallを通過した`443`のTLS通信を受ける。TCP/TLSの入口で接続レート、同時接続数、TLS ClientHelloの妥当性を確認し、不自然な通信を拒否する。正常な通信のみを後段の`WAF`に渡すことで、`NIPS`は広域的な侵入防止層、`WAF`はWebアプリケーション向けの詳細防御層として役割分担している。
 
 ### L3 / L4 で見ているもの
 

@@ -18,14 +18,56 @@
   - 危険な User-Agent の拒否
   - 明らかな path traversal や SQLi/XSS を狙う文字列の拒否
 - `certs/dev.crt`, `certs/dev.key`
-  - Step 1 の HTTPS 疎通確認用の自己署名証明書
+  - HTTPS疎通確認用の自己署名証明書
+  - SAN: `localhost`, `127.0.0.1`, `192.168.64.4`
 
 ## Step 1 での HTTPS の扱い
 
-- `nips` から受けた `80` と `443` を WAF で処理する
+- 外部公開された`443`を`nips`経由でWAFが処理する
 - TLS 終端は WAF で行う
 - 証明書はローカル検証用の自己署名であり、本番用途ではない
 - `curl -k https://<host>/api/health` のように疎通確認する前提
+
+自己署名証明書は公開CAから信頼されないため、ブラウザでは警告が表示されます。警告なしで検証する場合は、開発端末の信頼ストアへ`dev.crt`を明示的に登録します。秘密鍵`dev.key`は登録・配布せず、本番環境では公的CAまたは組織内CAが発行した別の証明書へ置き換えます。
+
+### 開発用証明書の内容
+
+現在の証明書は次の接続先をSAN（Subject Alternative Name）に含みます。
+
+```text
+DNS:localhost
+IP:127.0.0.1
+IP:192.168.64.4
+```
+
+証明書の用途はTLS Web Server Authentication、有効期限は2028年10月26日です。秘密鍵は`600`、公開証明書は`644`のファイル権限にします。
+
+内容と接続先の一致は次のコマンドで確認できます。
+
+```bash
+openssl x509 -in waf/certs/dev.crt \
+  -noout -subject -issuer -dates -ext subjectAltName
+openssl x509 -in waf/certs/dev.crt -noout -checkhost localhost
+openssl x509 -in waf/certs/dev.crt -noout -checkip 127.0.0.1
+openssl x509 -in waf/certs/dev.crt -noout -checkip 192.168.64.4
+```
+
+証明書を更新した場合は、WAFと外部入口を再作成して反映します。
+
+```bash
+sudo docker compose up -d --force-recreate waf external-firewall
+curl -k -i https://192.168.64.4/api/health
+```
+
+`curl -k`は証明書検証を無効にします。開発時の疎通確認だけに使用し、通常の利用では開発端末に`dev.crt`を信頼登録します。
+
+### 本番移行時
+
+- `dev.crt`と`dev.key`を本番へコピーしない
+- 公的CAまたは組織内CAから、本番ホスト名をSANに持つ証明書を取得する
+- 本番用秘密鍵をリポジトリへコミットしない
+- `waf/conf.d/default.conf`の証明書パスを本番用ファイルへ変更する
+- 切り替え後に証明書チェーン、ホスト名、有効期限、TLS 1.2／1.3での接続を確認する
 
 ## 今回の構成での位置づけ
 
@@ -307,7 +349,7 @@ GET  /api/security/monitoring/summary
 
 - `https://127.0.0.1/api/health`
   - `200 OK`
-- `http://127.0.0.1/`
+- `https://127.0.0.1/`
   - `200 OK`
   - body は `{"error":"not_found"}`
 
@@ -318,13 +360,13 @@ GET  /api/security/monitoring/summary
 
 ### 遮断系
 
-- `curl -A "sqlmap" http://127.0.0.1/`
+- `curl -k -A "sqlmap" https://127.0.0.1/`
   - `403`
-- `curl "http://127.0.0.1/?q=<script>"`
+- `curl -k "https://127.0.0.1/?q=<script>"`
   - `403`
-- `curl "http://127.0.0.1/?q=union%20select"`
+- `curl -k "https://127.0.0.1/?q=union%20select"`
   - `403`
-- `curl -X PUT http://127.0.0.1/`
+- `curl -k -X PUT https://127.0.0.1/`
   - `405`
 
 意味:
@@ -389,12 +431,12 @@ docker compose start waf
 ### WAF 有効時の確認コマンド
 
 ```bash
-curl -i http://127.0.0.1/
+curl -k -i https://127.0.0.1/
 curl -k -i https://127.0.0.1/api/health
-curl -i -A "sqlmap" http://127.0.0.1/
-curl -i "http://127.0.0.1/?q=<script>"
-curl -i "http://127.0.0.1/?q=union%20select"
-curl -i -X PUT http://127.0.0.1/
+curl -k -i -A "sqlmap" https://127.0.0.1/
+curl -k -i "https://127.0.0.1/?q=<script>"
+curl -k -i "https://127.0.0.1/?q=union%20select"
+curl -k -i -X PUT https://127.0.0.1/
 ```
 
 期待値:

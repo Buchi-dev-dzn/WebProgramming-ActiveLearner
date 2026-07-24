@@ -13,14 +13,13 @@ scheme + host + port
 したがって、次のURLはそれぞれ別オリジンです。
 
 ```text
-http://localhost:5173
-http://127.0.0.1:5173
-http://localhost:3000
 https://localhost:5173
-http://192.168.64.4
+https://127.0.0.1:5173
+https://localhost:3000
+https://192.168.64.4
 ```
 
-例えば、Viteの開発画面を`http://localhost:5173`で開き、APIを`http://192.168.64.4/api/products`で呼び出す場合はクロスオリジン通信になります。
+例えば、Viteの開発画面を`https://localhost:5173`で開き、APIを`https://192.168.64.4/api/products`で直接呼び出す場合はクロスオリジン通信になります。
 
 CORSはブラウザが実施する制御です。`curl`やサーバー間通信を認証する仕組みではなく、認証・認可やWAFの代わりにはなりません。
 
@@ -32,13 +31,13 @@ FastAPIは環境変数`CORS_ALLOWED_ORIGINS`をカンマ区切りで読み取り
 
 ```yaml
 environment:
-  CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173"
+  CORS_ALLOWED_ORIGINS: "https://localhost:5173,https://127.0.0.1:5173"
 ```
 
 これにより、次のVite開発サーバーを許可しています。
 
-- `http://localhost:5173`
-- `http://127.0.0.1:5173`
+- `https://localhost:5173`
+- `https://127.0.0.1:5173`
 
 末尾のスラッシュは付けません。実際にブラウザのアドレスバーで使用するオリジンと完全に一致させる必要があります。
 
@@ -108,10 +107,10 @@ POST /api/internal/security-events
 
 ## 5. フロントエンドからの利用例
 
-許可済みの`http://localhost:5173`で動作するフロントエンドから、VMのAPIを直接呼び出す例:
+許可済みの`https://localhost:5173`で動作するフロントエンドから、VMのAPIを直接呼び出す例:
 
 ```javascript
-const response = await fetch("http://192.168.64.4/api/auth/login", {
+const response = await fetch("https://192.168.64.4/api/auth/login", {
   method: "POST",
   credentials: "include",
   headers: {
@@ -135,7 +134,7 @@ const session = await response.json();
 access tokenを送る例:
 
 ```javascript
-const response = await fetch("http://192.168.64.4/api/auth/me", {
+const response = await fetch("https://192.168.64.4/api/auth/me", {
   credentials: "include",
   headers: {
     Authorization: `Bearer ${accessToken}`,
@@ -147,16 +146,16 @@ Vite proxyを使用して`fetch("/api/...")`とする場合、ブラウザから
 
 ## 6. 許可オリジンの変更
 
-React開発サーバーを`http://localhost:3000`で起動する場合:
+React開発サーバーを`https://localhost:3000`で起動する場合:
 
 ```yaml
-CORS_ALLOWED_ORIGINS: "http://localhost:3000"
+CORS_ALLOWED_ORIGINS: "https://localhost:3000"
 ```
 
 複数の開発URLを許可する場合:
 
 ```yaml
-CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOWED_ORIGINS: "https://localhost:3000,https://localhost:5173,https://127.0.0.1:5173"
 ```
 
 本番フロントエンドが`https://shop.example.com`の場合:
@@ -194,29 +193,29 @@ CORSで許可したサイトからであっても、権限が必要なAPIではa
 ### 許可されたオリジン
 
 ```bash
-curl -i \
+curl -k -i \
   -X OPTIONS \
-  -H "Origin: http://localhost:5173" \
+  -H "Origin: https://localhost:5173" \
   -H "Access-Control-Request-Method: POST" \
   -H "Access-Control-Request-Headers: content-type" \
-  http://127.0.0.1/api/auth/login
+  https://127.0.0.1/api/auth/login
 ```
 
 レスポンスに次のヘッダーが含まれていることを確認します。
 
 ```text
-Access-Control-Allow-Origin: http://localhost:5173
+Access-Control-Allow-Origin: https://localhost:5173
 ```
 
 ### 許可されていないオリジン
 
 ```bash
-curl -i \
+curl -k -i \
   -X OPTIONS \
   -H "Origin: https://untrusted.example" \
   -H "Access-Control-Request-Method: POST" \
   -H "Access-Control-Request-Headers: content-type" \
-  http://127.0.0.1/api/auth/login
+  https://127.0.0.1/api/auth/login
 ```
 
 許可されていないプリフライトはFastAPIによって拒否され、ブラウザから実APIリクエストは送信されません。
@@ -224,9 +223,9 @@ curl -i \
 ### GETレスポンス
 
 ```bash
-curl -i \
-  -H "Origin: http://localhost:5173" \
-  http://127.0.0.1/api/health
+curl -k -i \
+  -H "Origin: https://localhost:5173" \
+  https://127.0.0.1/api/health
 ```
 
 この場合も`Access-Control-Allow-Origin`が返ることを確認します。
@@ -237,7 +236,7 @@ curl -i \
 
 ブラウザはレスポンスをJavaScriptへ渡せない場合、詳細をCORSエラーとして表示することがあります。次の順で確認します。
 
-1. `curl http://127.0.0.1/api/health`が成功するか
+1. `curl -k https://127.0.0.1/api/health`が成功するか
 2. `docker compose ps`で各サービスが起動しているか
 3. ブラウザのNetworkタブで`OPTIONS`のステータスを確認する
 4. リクエストの`Origin`が設定値と完全一致しているか確認する
@@ -248,7 +247,7 @@ curl -i \
 
 ### HTTPとHTTPS
 
-`http://localhost:5173`と`https://localhost:5173`も別オリジンです。また、HTTPSページからHTTP APIを呼ぶとMixed ContentとしてCORS処理より前に遮断されることがあります。
+`http://localhost:5173`と`https://localhost:5173`は別オリジンです。現在はHTTPSオリジンだけを許可し、外部ポート`80`も公開していません。HTTPSページからHTTP APIを呼ぶ通信はMixed ContentとしてCORS処理より前に遮断されます。
 
 ### OPTIONSが404または405になる
 

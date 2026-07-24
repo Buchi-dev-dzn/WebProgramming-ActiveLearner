@@ -8,7 +8,7 @@
 | --- | --- |
 | UI | React |
 | ビルド・開発サーバー | Vite |
-| 開発時の配置 | Macの`localhost:5173` |
+| 開発時の配置 | Macの`https://localhost:5173` |
 | 開発時のAPI接続 | Viteの`/api` proxy |
 | 本番CORS | 本番フロントエンドURLだけを許可 |
 | access token | Reactアプリのメモリに保持 |
@@ -19,9 +19,9 @@
 
 ```text
 Browser
-  -> http://localhost:5173
+  -> https://localhost:5173
   -> Vite proxy /api
-  -> http://192.168.64.4
+  -> https://192.168.64.4
   -> external-firewall
   -> NIPS
   -> WAF
@@ -48,8 +48,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://192.168.64.4",
+        target: "https://192.168.64.4",
         changeOrigin: true,
+        secure: false, // 開発用の自己署名証明書を使用する場合のみ
       },
     },
   },
@@ -57,6 +58,10 @@ export default defineConfig({
 ```
 
 Vite proxyを使うと、ブラウザから見た接続先は`localhost:5173`のままです。Cookieも`localhost`に対して保存され、ViteがAPIへのリクエストを中継します。
+
+API側の自己署名証明書は`localhost`、`127.0.0.1`、`192.168.64.4`をSANに含みます。上の`secure: false`は、Vite proxyから開発用API証明書を検証せずに接続するための開発専用設定です。本番では使用しません。
+
+ブラウザから接続するVite開発サーバー自体もHTTPS設定が必要です。API側の秘密鍵を別端末へコピーして流用せず、Mac側で`mkcert`などを使ってVite用のローカル証明書を用意してください。
 
 ## 認証状態
 
@@ -150,11 +155,11 @@ React側でもユーザーの`role`を見て操作ボタンを制御しますが
 Composeでは次の値を使用します。
 
 ```yaml
-REFRESH_COOKIE_SECURE: "false"
+REFRESH_COOKIE_SECURE: "true"
 REFRESH_COOKIE_SAMESITE: "lax"
 ```
 
-Mac上のHTTP Vite開発サーバーで検証するため、開発時だけ`Secure`を無効にしています。
+Mac上のVite開発サーバーもHTTPSで起動し、Cookieの`Secure`属性を常に有効にします。
 
 Cookieの設定内容:
 

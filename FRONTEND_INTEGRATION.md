@@ -8,7 +8,7 @@
 
 ```text
 Frontend / Browser
-  -> external-firewall :80 / :443
+  -> external-firewall :443
   -> nips
   -> waf
   -> reverse-proxy
@@ -20,14 +20,10 @@ Frontend / Browser
 したがって、ブラウザから使用するAPIのベースURLは次のようになります。
 
 ```text
-開発VMへHTTP接続する場合:
-http://192.168.64.4/api
-
-開発VMへHTTPS接続する場合:
 https://192.168.64.4/api
 
 同じマシンから確認する場合:
-http://127.0.0.1/api
+https://127.0.0.1/api
 ```
 
 `172.16.31.182` は現在のドキュメントで想定しているVMのIPです。環境が異なる場合は、実際のホスト名またはIPに置き換えてください。
@@ -83,8 +79,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://192.168.64.4",
+        target: "https://192.168.64.4",
         changeOrigin: true,
+        secure: false, // 開発用自己署名証明書を使う場合のみ
       },
     },
   },
@@ -282,7 +279,7 @@ let session = {
 
 ページを再読み込みしてaccess tokenが失われた場合は、`POST /api/auth/refresh`を呼び出して新しいaccess tokenを取得します。refresh tokenはHttpOnlyなので、JavaScriptや`localStorage`から読み取れません。
 
-開発環境ではHTTPを使うためCookieの`Secure`属性を無効にしています。本番環境ではHTTPSを使用し、必ず`REFRESH_COOKIE_SECURE=true`へ変更します。
+開発環境もHTTPSのみを使用し、Cookieの`Secure`属性を有効にしています。Composeでは`REFRESH_COOKIE_SECURE=true`です。
 
 ## 6. 商品API
 
@@ -432,48 +429,50 @@ FastAPIの入力エラーは、一般的に次のような形式です。
 
 ## 10. HTTPS開発時の注意
 
-現在のHTTPS証明書は開発用の自己署名証明書です。ブラウザから初回アクセスした際に、証明書警告が表示される可能性があります。
+現在のHTTPS証明書は開発用の自己署名証明書です。SANには`localhost`、`127.0.0.1`、`192.168.64.4`が含まれます。公開CAからは信頼されないため、ブラウザでは証明書警告が表示されます。
 
-また、HTTPSで表示したフロントエンドからHTTPのAPIを呼び出すと、Mixed Contentとしてブラウザに遮断されます。フロントエンドとAPIは両方ともHTTP、または両方ともHTTPSに揃えてください。
+ブラウザで警告なしに検証する場合は、開発端末の信頼ストアへ`waf/certs/dev.crt`だけを登録します。`waf/certs/dev.key`は秘密鍵なので、登録・配布しません。Vite開発サーバー自体もHTTPSで起動してください。
+
+HTTPSで表示したフロントエンドからHTTP APIを呼ぶ通信はMixed Contentとして遮断されます。また、この構成では外部ポート`80`を公開していないため、API URLには必ず`https://`を使用します。
 
 ## 11. curlによる疎通確認
 
 フロントエンドを実装する前に、API単体で疎通確認できます。
 
 ```bash
-curl -i http://127.0.0.1/api/health
-curl -i "http://127.0.0.1/api/products?limit=20&offset=0"
+curl -k -i https://127.0.0.1/api/health
+curl -k -i "https://127.0.0.1/api/products?limit=20&offset=0"
 ```
 
 ユーザー登録:
 
 ```bash
-curl -i \
+curl -k -i \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"example-password","role":"customer"}' \
-  http://127.0.0.1/api/auth/register
+  https://127.0.0.1/api/auth/register
 ```
 
 ログイン:
 
 ```bash
-curl -i \
+curl -k -i \
   -X POST \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"example-password"}' \
-  http://127.0.0.1/api/auth/login
+  https://127.0.0.1/api/auth/login
 ```
 
 認証が必要なAPI:
 
 ```bash
-curl -i \
+curl -k -i \
   -H "Authorization: Bearer ACCESS_TOKEN_HERE" \
-  http://127.0.0.1/api/auth/me
+  https://127.0.0.1/api/auth/me
 ```
 
-HTTPSの場合は、開発用自己署名証明書を使用しているため、検証時に`-k`が必要です。
+開発用自己署名証明書をOSの信頼ストアへ登録していない場合、curlでの検証には`-k`が必要です。`-k`は証明書検証を無効化するため、開発時の疎通確認以外では使用しません。
 
 ```bash
 curl -k -i https://127.0.0.1/api/health
