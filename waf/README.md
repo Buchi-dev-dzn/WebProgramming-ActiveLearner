@@ -1,5 +1,7 @@
 # WAF Layer
 
+> 実装状況: 2026-07-24 時点。許可ルートと検査ルールの正本は `conf.d/default.conf`、比較用バイパスは `conf.d-pass-through/default.conf` です。後半の実測値は過去の検証記録です。
+
 このディレクトリには、`nips` の後段に置く `waf` コンテナの設定を置いています。
 
 ## 役割

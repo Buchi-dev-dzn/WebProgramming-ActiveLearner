@@ -1,5 +1,7 @@
 # HIDS / HIPS
 
+> 実装状況: 2026-07-24 時点。OS 全体を監視する製品ではなく、FastAPI ソースの整合性とアプリのヘルスを監視する学習用センサーです。
+
 `HIDS` は `Host Intrusion Detection System`、`HIPS` は `Host Intrusion Prevention System` の略です。
 
 今回の構成では、`fastapi-app` をアプリケーションホスト相当として扱い、ホスト内部で見える認証状態や token 状態を `audit_events` に残します。追加で `hids-hips` コンテナを置き、FastAPI ソースの改ざん検知と内部ヘルスチェックを行います。

@@ -1,5 +1,7 @@
 # External Firewall
 
+> 実装状況: 2026-07-24 時点。Compose の公開入口は `external-firewall` の `443/tcp` のみです。`nftables` スクリプトは任意のホスト側実験で、Compose 起動時には自動適用されません。後半の実測値は過去の検証記録です。
+
 このディレクトリには、Linux VM 上で `External Firewall` を擬似再現するための設定と補助スクリプトを置いています。
 
 ## この層の目的

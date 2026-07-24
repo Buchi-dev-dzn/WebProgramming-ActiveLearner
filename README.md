@@ -2,6 +2,8 @@
 
 EC / Marketplace 系サービスを題材に、外部公開入口、DMZ、Application 層、Database 層、監視レイヤーを 1 台の Linux VM 上で擬似的に分離して検証するための Docker Compose 構成です。
 
+> 実装状況: 2026-07-24 時点。現行仕様の正本は `docker-compose.yml`、各サービス設定、`fastapi/app/main.py`、`postgres/init/001_products.sql` です。本文はそれらに合わせています。
+
 このリポジトリで再現したい主題は「コンテナ化」ではなく、次の設計判断を説明・検証できるようにすることです。
 
 - 外部から直接到達できる入口をどこに限定するか
@@ -53,7 +55,7 @@ graph TD
   HIDS -.ingest.-> App
 ```
 
-より詳細な現在構成は [CURRENT_ARCHITECTURE.md](/home/buchi/WebProgramming-ActiveLearner/CURRENT_ARCHITECTURE.md) にまとめています。
+より詳細な現在構成は [CURRENT_ARCHITECTURE.md](./CURRENT_ARCHITECTURE.md) にまとめています。
 
 ## 主要コンポーネント
 
@@ -100,7 +102,7 @@ Compose では次の Docker network で境界を分けています。
 
 ## DB 実装
 
-PostgreSQL 初期化 SQL は [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql) です。
+PostgreSQL 初期化 SQL は [`postgres/init/001_products.sql`](./postgres/init/001_products.sql) です。
 
 現在の主なテーブル:
 
@@ -120,7 +122,7 @@ PostgreSQL 初期化 SQL は [postgres/init/001_products.sql](/home/buchi/WebPro
 - login 失敗回数を記録し、しきい値を超えたアカウントを一時ロックする
 - 認証、refresh、logout、出品者プロフィール更新、センサー検知を `audit_events` に記録する
 
-詳細は [postgres/AUTH_CRYPTO_DESIGN.md](/home/buchi/WebProgramming-ActiveLearner/postgres/AUTH_CRYPTO_DESIGN.md) を参照してください。
+詳細は [postgres/AUTH_CRYPTO_DESIGN.md](./postgres/AUTH_CRYPTO_DESIGN.md) を参照してください。
 
 ## 起動
 
@@ -165,7 +167,7 @@ docker compose down -v
 
 ## テスト
 
-テストスクリプトは [other/test/](/home/buchi/WebProgramming-ActiveLearner/other/test) にあります。VM 外部から `192.168.64.4` に対して実行する前提のドキュメントになっていますが、ローカルで確認する場合は対象 IP を `127.0.0.1` に読み替えます。
+テストスクリプトは [`other/test/`](./other/test/) にあります。VM 外部から `192.168.64.4` に対して実行する前提のドキュメントになっていますが、ローカルで確認する場合は対象 IP を `127.0.0.1` に読み替えます。
 
 代表的な実行順:
 
@@ -179,7 +181,7 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4
 python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
 ```
 
-詳細は [other/test/README.md](/home/buchi/WebProgramming-ActiveLearner/other/test/README.md) を参照してください。
+詳細は [other/test/README.md](./other/test/README.md) を参照してください。
 
 ## 補足ドキュメント
 

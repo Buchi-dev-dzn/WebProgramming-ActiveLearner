@@ -1,6 +1,6 @@
 # Current Architecture
 
-このドキュメントは、現在の Docker 実装が Linux VM 上でどう並んでいるかと、まだ未実装だが今後想定している層を 1 枚で確認するためのものです。
+このドキュメントは、2026-07-24 時点の Docker 実装が Linux VM 上でどう並んでいるかと、未実装の将来候補を 1 枚で確認するためのものです。現行状態は `docker-compose.yml` を正とします。
 
 ## 全体構成
 
@@ -172,16 +172,16 @@ Client
   - `PostgreSQL`
   - 商品、認証、出品者プロフィール、監査イベントを持つ最深部のデータ層
 
-## まだ未実装だが想定しているもの
+## 実装済みの監視層と未実装の候補
 
 - `API Gateway`
   - 現在は `fastapi-app` の前段に未分離
   - 将来的には独立コンテナ化して、認証認可や API 単位の制御を分離する
 - `NIDS`
-  - 本線上ではなく、監視専用として横からログを観測する
+  - 実装済み。本線上ではなく、監視専用として横からログを観測する
   - `nids` コンテナが external firewall / WAF / reverse proxy / internal firewall のログを読み、`logs/nids/alerts.log` にアラートを残す
 - `HIDS / HIPS`
-  - `fastapi-app` ホスト相当の監視・保護として追加する
+  - 実装済み。`fastapi-app` ホスト相当の監視・保護を担う
   - `hids-hips` コンテナが FastAPI ソースの改ざん検知と内部ヘルスチェックを行い、`logs/hids/alerts.log` にアラートを残す
 
 ## Docker に依存している部分
@@ -387,4 +387,4 @@ Docker の `edge_net`, `app_net`, `db_net` は、本物のインフラで言え�
 
 報告書では、次のように説明できます。
 
-今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` へ順に流れる。現在の FastAPI は商品 API、認証 API、JWT、出品者プロフィール API を持ち、PostgreSQL には `products`, `users`, `seller_profiles`, `audit_events` を保持している。未実装の `API Gateway`, `NIDS`, `HIDS/HIPS` は今後の拡張対象として位置づけている。
+今回の環境では、本来別サーバとして分離されるべき `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `Internal Firewall`, `Backend Application`, `Database` を、1 台の Linux VM 上で Docker コンテナとして直列配置することで擬似再現している。外部通信はまず VM の IP `192.168.64.4` に到達し、ホスト公開ポート `443` を経由して `external-firewall` に入り、その後 `nips`, `waf`, `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` へ順に流れる。現在の FastAPI は商品 API、認証 API、JWT、出品者プロフィール API、監査・センサー ingest API を持ち、PostgreSQL には `products`, `users`, `refresh_tokens`, `seller_profiles`, `audit_events` を保持している。`NIDS` と `HIDS/HIPS` は監視コンテナとして実装済みで、未分離なのは `API Gateway` である。

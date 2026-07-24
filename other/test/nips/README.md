@@ -1,5 +1,7 @@
 # NIPS Test
 
+> 実装状況: 2026-07-24 時点。通常設定と `docker-compose.nips-bypass.yml` を使う pass-through 設定を比較します。ホスト `80` は現在公開されないため、外部からの HTTP baseline は成立しません。
+
 このテストは、Mac ホストなど VM 外部から `NIPS` の inline 防御を確認するためのものです。
 
 ## 何を検証するか

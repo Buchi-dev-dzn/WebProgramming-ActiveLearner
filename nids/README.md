@@ -1,8 +1,10 @@
 # NIDS
 
+> 実装状況: 2026-07-24 時点。パケットキャプチャ型ではなく、4 層の nginx ログを差分走査する学習用ログセンサーです。
+
 `NIDS` は `Network Intrusion Detection System` の略で、通信本線を止めるのではなく、横から観測して異常を検知する層です。
 
-今回のリポジトリでは、実 NIC のパケットミラーまでは再現せず、Docker 上のログ監視センサーとして `nids` コンテナを追加します。通信本線は止めず、external firewall / WAF / reverse proxy / internal firewall のログを横から読み、検知結果を `logs/nids/alerts.log` に残します。
+今回のリポジトリでは、実 NIC のパケットミラーまでは再現せず、Docker 上のログ監視センサーとして `nids` コンテナを実装しています。通信本線は止めず、external firewall / WAF / reverse proxy / internal firewall のログを横から読み、検知結果を `logs/nids/alerts.log` に残します。
 
 ## 現在の実装
 

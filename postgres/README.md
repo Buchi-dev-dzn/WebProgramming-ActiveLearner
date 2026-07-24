@@ -1,5 +1,7 @@
 # PostgreSQL Database
 
+> 実装状況: 2026-07-24 時点。スキーマの正本は `init/001_products.sql` です。
+
 このディレクトリには、独立した `postgres` コンテナで管理する DB 初期化 SQL を置きます。
 
 ## 役割
@@ -15,7 +17,7 @@
 
 - [init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql)
   - `products` テーブルを作成する
-  - `users`, `seller_profiles`, `audit_events` テーブルを作成する
+  - `users`, `refresh_tokens`, `seller_profiles`, `audit_events` テーブルを作成する
   - `sku` の一意制約、金額・在庫の CHECK 制約、SKU 形式制約を DB 側にも置く
   - `app_user` を `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE` で作成する
   - `app_user` にはアプリが必要とする `SELECT`, `INSERT`, `UPDATE` と sequence 利用だけを許可する

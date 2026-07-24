@@ -1,5 +1,7 @@
 # WAF Test
 
+> 実装状況: 2026-07-24 時点。通常設定と `docker-compose.waf-bypass.yml` を使う pass-through 設定を比較します。外部公開は HTTPS (`443`) のみです。
+
 このテストは、Mac ホストなど VM 外部から `WAF` の Web 向け遮断を確認するためのものです。
 
 ## 前提

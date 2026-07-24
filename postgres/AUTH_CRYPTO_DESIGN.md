@@ -1,6 +1,8 @@
 # Auth and Database Cryptography Design
 
-このドキュメントは、今後 `FastAPI + PostgreSQL` にログイン機能と認証用データ管理を追加するための設計メモです。
+> 状態: 2026-07-24 時点の実装済み認証・暗号化設計と将来候補を併記しています。実装範囲の正本は `init/001_products.sql` と `../fastapi/app/main.py` です。「候補」と記したテーブルや API は未実装です。
+
+このドキュメントは、`FastAPI + PostgreSQL` のログイン機能と認証用データ管理、および今後の拡張候補を整理する設計メモです。
 
 目的は、CRYPTREC 暗号リストを参考にしながら、DB に保存する認証情報・個人情報をどのように保護するかを事前に整理することです。
 
@@ -111,7 +113,7 @@ email_lookup_hash = HMAC-SHA-256(EMAIL_LOOKUP_KEY, normalized_email)
 
 ## 想定する DB テーブル
 
-`users` テーブルを追加します。
+`users` テーブルを実装しています。
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (

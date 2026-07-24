@@ -1,5 +1,7 @@
 # Reverse Proxy
 
+> 実装状況: 2026-07-24 時点。DMZ 中継と request ID 付与を担当し、WAF 検査や認証は担当しません。
+
 このディレクトリには、DMZ に置く `reverse-proxy` コンテナの設定と説明をまとめます。
 
 ## 役割

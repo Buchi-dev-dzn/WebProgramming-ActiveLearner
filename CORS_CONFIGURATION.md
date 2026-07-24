@@ -1,5 +1,7 @@
 # FastAPIのCORS設定
 
+> 実装状況: 2026-07-24 時点。`fastapi/app/main.py` と `docker-compose.yml` の現行設定を説明します。フロントエンド本体はこのリポジトリに含まれません。
+
 ## 1. CORSとは
 
 CORS（Cross-Origin Resource Sharing）は、ブラウザが異なるオリジンのWeb APIへアクセスしてよいかを、API側がレスポンスヘッダーで示す仕組みです。
@@ -53,7 +55,7 @@ environment:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
-        allow_credentials=True,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
     expose_headers=["X-Request-Id"],

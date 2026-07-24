@@ -1,5 +1,7 @@
 # Internal Firewall
 
+> 実装状況: 2026-07-24 時点。許可元 `172.30.0.10` と FastAPI 宛先 `172.31.0.20:8000` は Compose の固定 IP 設定と対になっています。
+
 このディレクトリには、`reverse-proxy` の後段に置く `internal-firewall` コンテナの設定をまとめます。
 
 ## 役割

@@ -1,6 +1,8 @@
 # HIDS / HIPS / NIDS Addition Record
 
-このドキュメントは、`CURRENT_ARCHITECTURE.md` を理想構成の基準として、現行 Docker 構成へ HIDS、HIPS、NIDS を追加した内容を記録するためのものです。
+> 文書種別: 2026-07-24 時点の追加記録です。現在仕様の正本は `README.md`、`CURRENT_ARCHITECTURE.md`、実装ファイルです。
+
+このドキュメントは、現行 Docker 構成へ HIDS、HIPS、NIDS を追加した判断と制約を記録するものです。
 
 ## 判断した方針
 
@@ -163,7 +165,7 @@ Header: X-Sensor-Token: <SECURITY_SENSOR_TOKEN>
 
 この API は `SECURITY_SENSOR_TOKEN` が一致した場合だけイベントを受け付けます。Docker Compose では学習用の固定値 `dev-security-sensor-token` を使っています。本番では secret manager や `.env` で差し替える前提です。
 
-## 検証記録
+## 追加時の検証記録
 
 実行済みの確認は次です。
 
@@ -190,7 +192,7 @@ docker compose build nids hids-hips
 permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
 ```
 
-そのため、現時点で確認済みなのは静的検証までです。Docker socket 権限がある環境では、次で実行確認します。
+これは追加作業時点の記録であり、現在の稼働状態を保証するものではありません。Docker socket 権限がある環境では、次で実行確認します。
 
 ```bash
 docker compose up -d --build nids hids-hips

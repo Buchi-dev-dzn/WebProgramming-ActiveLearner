@@ -1,5 +1,7 @@
 # FastAPI Application
 
+> 実装状況: 2026-07-24 時点。エンドポイントの正本は `app/main.py` です。
+
 このディレクトリには、内部 API サービスとして動く `fastapi-app` の実装を置きます。
 
 ## 役割
@@ -46,6 +48,8 @@
   - admin / support ユーザー向けに監査イベントを返す
 - `GET /api/security/monitoring/summary`
   - admin / support ユーザー向けに認証異常、NIDS/HIDS 相当のシグナル概要を返す
+- `POST /api/internal/security-events`
+  - `X-Sensor-Token` が `SECURITY_SENSOR_TOKEN` と一致する内部センサーのイベントを `audit_events` に保存する
 
 ## SQL と DB アクセスの扱い
 
