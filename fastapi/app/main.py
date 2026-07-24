@@ -15,6 +15,7 @@ import asyncpg
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 
@@ -33,6 +34,11 @@ MAX_FAILED_LOGINS = 5
 LOGIN_LOCKOUT_SECONDS = 15 * 60
 MAX_AUDIT_LIMIT = 100
 SECURITY_SENSOR_TOKEN = os.environ.get("SECURITY_SENSOR_TOKEN")
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 db_pool: asyncpg.Pool | None = None
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -465,6 +471,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="security-ec-fastapi", lifespan=lifespan)
+
+if CORS_ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ALLOWED_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+        expose_headers=["X-Request-Id"],
+        max_age=600,
+    )
 
 
 @app.middleware("http")
