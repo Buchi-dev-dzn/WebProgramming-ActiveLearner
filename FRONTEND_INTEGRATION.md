@@ -310,6 +310,10 @@ const result = await apiRequest("/products", {
     name: "Sample Item",
     price_cents: 1500,
     stock: 10,
+    description: "Optional description",
+    category: "生活雑貨",
+    tag: "おすすめ",
+    image_url: "https://cdn.example.test/item-001.png",
   }),
 });
 ```
@@ -325,6 +329,27 @@ const result = await apiRequest("/product/stock", {
   body: JSON.stringify({
     sku: "ITEM-001",
     stock: 8,
+  }),
+});
+```
+
+### 商品内容を更新
+
+```javascript
+const result = await apiRequest(`/products/${encodeURIComponent("ITEM-001")}`, {
+  method: "PUT",
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    name: "Updated Item",
+    price_cents: 1600,
+    stock: 8,
+    description: "Optional description",
+    category: "生活雑貨",
+    tag: "おすすめ",
+    image_url: "https://cdn.example.test/item-001.png",
   }),
 });
 ```

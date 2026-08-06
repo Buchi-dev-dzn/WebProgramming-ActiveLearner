@@ -14,7 +14,7 @@ from typing import Any
 import asyncpg
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from fastapi import Cookie, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Cookie, FastAPI, Header, HTTPException, Path, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
@@ -58,6 +58,28 @@ class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     price_cents: int = Field(ge=0, le=100_000_000)
     stock: int = Field(ge=0, le=1_000_000)
+    description: str = Field(default="", max_length=5000)
+    category: str = Field(default="", max_length=120)
+    tag: str = Field(default="", max_length=120)
+    image_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        pattern=r"^https?://[^\s]+$",
+    )
+
+
+class ProductUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    price_cents: int = Field(ge=0, le=100_000_000)
+    stock: int = Field(ge=0, le=1_000_000)
+    description: str = Field(default="", max_length=5000)
+    category: str = Field(default="", max_length=120)
+    tag: str = Field(default="", max_length=120)
+    image_url: str | None = Field(
+        default=None,
+        max_length=2048,
+        pattern=r"^https?://[^\s]+$",
+    )
 
 
 class ProductStockUpdate(BaseModel):
@@ -123,6 +145,10 @@ def product_to_dict(record: asyncpg.Record) -> dict[str, Any]:
         "name": record["name"],
         "price_cents": record["price_cents"],
         "stock": record["stock"],
+        "description": record["description"],
+        "category": record["category"],
+        "tag": record["tag"],
+        "image_url": record["image_url"],
         "created_at": record["created_at"].isoformat(),
         "updated_at": record["updated_at"].isoformat(),
     }
@@ -516,7 +542,7 @@ if CORS_ALLOWED_ORIGINS:
         CORSMiddleware,
         allow_origins=CORS_ALLOWED_ORIGINS,
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT"],
         allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
         expose_headers=["X-Request-Id"],
         max_age=600,
@@ -1288,7 +1314,8 @@ async def list_products(
     async with pool.acquire() as connection:
         records = await connection.fetch(
             """
-            SELECT id, sku, name, price_cents, stock, created_at, updated_at
+            SELECT id, sku, name, price_cents, stock, description, category, tag,
+                   image_url, created_at, updated_at
             FROM products
             ORDER BY id
             LIMIT $1 OFFSET $2
@@ -1316,14 +1343,22 @@ async def create_product(
         try:
             record = await connection.fetchrow(
                 """
-                INSERT INTO products (sku, name, price_cents, stock, owner_user_id)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id, sku, name, price_cents, stock, created_at, updated_at
+                INSERT INTO products (
+                    sku, name, price_cents, stock, description, category, tag,
+                    image_url, owner_user_id
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                RETURNING id, sku, name, price_cents, stock, description, category,
+                          tag, image_url, created_at, updated_at
                 """,
                 product.sku,
                 product.name,
                 product.price_cents,
                 product.stock,
+                product.description,
+                product.category,
+                product.tag,
+                product.image_url,
                 user["id"],
             )
         except asyncpg.UniqueViolationError as error:
@@ -1355,7 +1390,8 @@ async def get_product(
     async with pool.acquire() as connection:
         record = await connection.fetchrow(
             """
-            SELECT id, sku, name, price_cents, stock, created_at, updated_at
+            SELECT id, sku, name, price_cents, stock, description, category, tag,
+                   image_url, created_at, updated_at
             FROM products
             WHERE sku = $1
             """,
@@ -1367,6 +1403,63 @@ async def get_product(
         "item": product_to_dict(record),
         "request_id": extract_request_id(request),
     }
+
+
+@app.put("/api/products/{sku}")
+async def update_product(
+    product: ProductUpdate,
+    request: Request,
+    sku: str = Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$"),
+    authorization: str | None = Header(default=None),
+):
+    user = await require_role(authorization, {"seller", "admin"})
+    pool = require_db_pool()
+    async with pool.acquire() as connection:
+        record = await connection.fetchrow(
+            """
+            UPDATE products
+            SET name = $2,
+                price_cents = $3,
+                stock = $4,
+                description = $5,
+                category = $6,
+                tag = $7,
+                image_url = $8,
+                updated_at = now()
+            WHERE sku = $1
+              AND (owner_user_id = $9 OR $10)
+            RETURNING id, sku, name, price_cents, stock, description, category,
+                      tag, image_url, created_at, updated_at
+            """,
+            sku,
+            product.name,
+            product.price_cents,
+            product.stock,
+            product.description,
+            product.category,
+            product.tag,
+            product.image_url,
+            user["id"],
+            user["role"] == "admin",
+        )
+        if record is None:
+            exists = await connection.fetchval(
+                "SELECT 1 FROM products WHERE sku = $1",
+                sku,
+            )
+            if exists:
+                raise HTTPException(status_code=403, detail={"error": "not_product_owner"})
+            raise HTTPException(status_code=404, detail={"error": "product_not_found"})
+        await insert_audit_event(
+            connection,
+            request,
+            "product_update",
+            actor_user_id=user["id"],
+            target_type="product",
+            target_id=str(record["id"]),
+            details={"sku": record["sku"]},
+        )
+    return {"item": product_to_dict(record), "request_id": extract_request_id(request)}
 
 
 @app.post("/api/product/stock")
@@ -1385,7 +1478,8 @@ async def update_product_stock(
                 updated_at = now()
             WHERE sku = $1
               AND (owner_user_id = $3 OR $4)
-            RETURNING id, sku, name, price_cents, stock, created_at, updated_at
+            RETURNING id, sku, name, price_cents, stock, description, category, tag,
+                      image_url, created_at, updated_at
             """,
             update.sku,
             update.stock,

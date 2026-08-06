@@ -12,6 +12,7 @@
 - `/api/products` で PostgreSQL に商品を作成できるか
 - `/api/product?sku=...` で作成済み商品を取得できるか
 - `/api/product/stock` で在庫更新ができるか
+- `PUT /api/products/{sku}` で商品内容を更新できるか
 - 商品登録・在庫更新が監査ログに記録されるか
 - `/api/auth/register` で role なしの統合アカウントを登録できるか
 - 未認証の商品登録が `401` になるか

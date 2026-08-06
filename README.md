@@ -11,6 +11,8 @@ EC / Marketplace 系サービスを題材に、外部公開入口、DMZ、Applic
 - 既存 `customer` / `seller` を `member` へ移行し、既存refresh tokenは維持
 - 商品登録・在庫更新を統合アカウントへ許可し、在庫更新は商品所有者またはadminに限定
 - 商品操作を監査ログへ記録し、APIドキュメントとテストを更新
+- 商品に説明、カテゴリー、表示タグ、画像URLを追加し、`PUT /api/products/{sku}` で編集可能化
+- 既存商品の追加項目は `postgres/init/004_product_metadata.sql` で移行
 
 既存DBへの移行は [`postgres/init/003_unified_accounts.sql`](./postgres/init/003_unified_accounts.sql) を適用してください。
 

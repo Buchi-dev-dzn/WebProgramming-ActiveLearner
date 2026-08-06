@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS products (
     name TEXT NOT NULL,
     price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
     stock INTEGER NOT NULL CHECK (stock >= 0),
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    tag TEXT NOT NULL DEFAULT '',
+    image_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT products_sku_format CHECK (sku ~ '^[A-Za-z0-9._-]+$')

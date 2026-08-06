@@ -67,6 +67,7 @@ python3 other/test/waf/check_waf.py 192.168.64.4 --json
   - `404`
 - `PUT /`
   - `405`
+- `PUT /api/products/{sku}` はFastAPIの認証・所有者認可へ到達させる
 - `POST /api/auth/register` with empty JSON
   - `422`
   - WAF は許可し、後段 FastAPI の validation error が返る

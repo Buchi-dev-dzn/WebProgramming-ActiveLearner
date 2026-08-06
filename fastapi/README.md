@@ -24,6 +24,8 @@
   - 商品一覧を返す
 - `POST /api/products`
   - 統合アカウントまたは admin が所有者として商品を作成する
+- `PUT /api/products/{sku}`
+  - 商品名、価格、在庫、説明、カテゴリー、タグ、画像URLを所有者または admin が更新する
 - `GET /api/product?sku=...`
   - SKU 指定で商品を 1 件返す
 - `POST /api/product/stock`
@@ -58,7 +60,7 @@
 - 外部からは `external-firewall -> nips -> waf -> reverse-proxy -> internal-firewall -> fastapi-app` を通る必要がある
 - FastAPI では `asyncpg` の `$1`, `$2` 形式の bind parameter だけで SQL を実行する
 - FastAPI は DB 管理ユーザーではなく、制限付きの `app_user` で PostgreSQL に接続する
-- テーブル作成は [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql) で DB コンテナ側に分離する
+- テーブル作成は [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql)、既存DBの商品項目追加は [postgres/init/004_product_metadata.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/004_product_metadata.sql) で DB コンテナ側に分離する
 - SKU は `^[A-Za-z0-9._-]+$` に制限し、不要な文字を API 入力で受け付けない
 - パスワードは復号可能な暗号化ではなく、`PBKDF2-HMAC-SHA-256` の password hash として保存する
 - email や出品者連絡先は `AES-256-GCM` で暗号化し、検索には `HMAC-SHA-256` の blind index を使う
@@ -97,6 +99,7 @@
 - `auth_logout`
 - `seller_profile_upsert`
 - `product_create`
+- `product_update`
 - `product_stock_update`
 
 これらを `audit_events` に保存する。`source_ip_hash` は IP をそのまま残さず HMAC hash として扱い、`user_agent_summary` は長さと制御文字を抑えた要約だけを保存する。

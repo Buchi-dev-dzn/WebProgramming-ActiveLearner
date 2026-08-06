@@ -159,6 +159,14 @@ def main() -> None:
             args.timeout,
         ),
         request_case(
+            "product_update_put_reaches_backend",
+            "PUT",
+            f"https://{args.target}:{args.https_port}/api/products/waf-check-001",
+            422,
+            args.timeout,
+            headers={"Content-Type": "application/json"},
+        ),
+        request_case(
             "auth_register_route_allowed",
             "POST",
             f"https://{args.target}:{args.https_port}/api/auth/register",

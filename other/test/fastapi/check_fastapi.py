@@ -197,6 +197,27 @@ def main() -> None:
                 "name": "Codex Test Product",
                 "price_cents": 1299,
                 "stock": 7,
+                "description": "A test product",
+                "category": "test",
+                "tag": "featured",
+                "image_url": "https://example.test/product.png",
+            },
+            headers=auth_headers,
+        )
+        update_case = request_json_case(
+            "product_update_status",
+            "PUT",
+            f"https://{args.target}:{args.https_port}/api/products/{product_sku}",
+            200,
+            timeout,
+            {
+                "name": "Updated Codex Test Product",
+                "price_cents": 1399,
+                "stock": 7,
+                "description": "Updated test product",
+                "category": "updated-test",
+                "tag": "sale",
+                "image_url": "https://example.test/updated.png",
             },
             headers=auth_headers,
         )
@@ -230,7 +251,7 @@ def main() -> None:
             404,
             timeout,
         )
-        cases.extend([create_case, get_case, stock_case, list_case, missing_case])
+        cases.extend([create_case, update_case, get_case, stock_case, list_case, missing_case])
 
         product_audit_case = request_json_case(
             "product_mutations_are_audited",
@@ -244,6 +265,7 @@ def main() -> None:
 
         try:
             created_payload = json.loads(create_case.detail)
+            updated_payload = json.loads(update_case.detail)
             fetched_payload = json.loads(get_case.detail)
             stock_payload = json.loads(stock_case.detail)
             list_payload = json.loads(list_case.detail)
@@ -255,10 +277,12 @@ def main() -> None:
             }
             product_shape_ok = (
                 created_payload.get("item", {}).get("sku") == product_sku
+                and updated_payload.get("item", {}).get("category") == "updated-test"
+                and updated_payload.get("item", {}).get("tag") == "sale"
                 and fetched_payload.get("item", {}).get("sku") == product_sku
                 and stock_payload.get("item", {}).get("stock") == 3
                 and isinstance(list_payload.get("items"), list)
-                and {"product_create", "product_stock_update"}
+                and {"product_create", "product_update", "product_stock_update"}
                 <= product_audit_actions
             )
         except json.JSONDecodeError:
