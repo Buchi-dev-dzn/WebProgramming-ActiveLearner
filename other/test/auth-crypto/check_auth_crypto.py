@@ -332,7 +332,13 @@ def main() -> None:
         "seller_profile_get",
         seller_get_status == 200
         and seller_get_payload is not None
-        and seller_get_payload.get("seller_profile", {}).get("business_email") == email,
+        and seller_get_payload.get("seller_profile", {}).get("business_email") == email
+        and seller_get_payload.get("seller_profile", {}).get(
+            "has_payout_account_token"
+        )
+        is True
+        and "payout_account_token"
+        not in seller_get_payload.get("seller_profile", {}),
         seller_get_body,
     )
 
@@ -364,6 +370,16 @@ def main() -> None:
                 FROM audit_events
                 WHERE actor_user_id = {user_id}
                   AND action IN ('auth_register', 'auth_login', 'auth_refresh')
+              ),
+              EXISTS (
+                SELECT 1
+                FROM seller_profiles
+                WHERE user_id = {user_id}
+                  AND payout_account_token_ciphertext IS NOT NULL
+                  AND payout_account_token_nonce IS NOT NULL
+                  AND payout_account_token_key_id IS NOT NULL
+                  AND encode(payout_account_token_ciphertext, 'escape')
+                      NOT LIKE '%payout-token-{marker}%'
               )
             FROM users
             WHERE id = {user_id};
@@ -387,13 +403,14 @@ def main() -> None:
             fields = stdout.split("|")
             db_ok = (
                 code == 0
-                and len(fields) == 6
+                and len(fields) == 7
                 and fields[0] == "f"
                 and fields[1] == "f"
                 and fields[2] == "f"
                 and fields[3] == "t"
                 and fields[4] == "t"
                 and fields[5] == "t"
+                and fields[6] == "t"
             )
             add_case(
                 cases,

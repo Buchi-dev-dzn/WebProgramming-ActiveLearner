@@ -120,3 +120,7 @@
 {"action": "nids_ingest_failed", "component": "nids", "error": "HTTP Error 404: Not Found", "severity": "warning", "timestamp": "2026-07-24T01:26:07.715500+00:00"}
 {"action": "nids_block_status", "component": "nids", "sample": "172.18.0.4 - - [24/Jul/2026:01:26:03 +0000] \"PUT / HTTP/1.1\" 405 150 \"-\" \"Python-urllib/3.14\"", "severity": "warning", "source_file": "waf/access.log", "target_id": "waf/access.log", "target_type": "network-log", "timestamp": "2026-07-24T01:26:07.715799+00:00"}
 {"action": "nids_ingest_failed", "component": "nids", "error": "HTTP Error 404: Not Found", "severity": "warning", "timestamp": "2026-07-24T01:26:07.717709+00:00"}
+{"action": "sensor_heartbeat", "component": "nids", "event": "sensor_started", "severity": "info", "source_dir": "/sources", "target_id": "nids", "target_type": "sensor", "timestamp": "2026-08-06T10:05:22.163187+00:00"}
+{"action": "nids_ingest_failed", "component": "nids", "error": "<urlopen error [Errno 111] Connection refused>", "severity": "warning", "timestamp": "2026-08-06T10:05:22.659440+00:00"}
+{"action": "sensor_heartbeat", "component": "nids", "event": "sensor_started", "severity": "info", "source_dir": "/sources", "target_id": "nids", "target_type": "sensor", "timestamp": "2026-08-06T13:16:47.743635+00:00"}
+{"action": "nids_ingest_failed", "component": "nids", "error": "<urlopen error [Errno 111] Connection refused>", "severity": "warning", "timestamp": "2026-08-06T13:16:48.177333+00:00"}

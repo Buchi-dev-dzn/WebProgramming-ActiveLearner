@@ -16,7 +16,7 @@
 - token なしの `/api/auth/me` を `401` で拒否するか
 - seller ユーザーが出品者プロフィールを作成・取得できるか
 - logout で refresh token を失効できるか
-- 任意で DB 内に平文 email / password / refresh token が保存されていないか確認する
+- 任意で DB 内に平文 email / password / refresh token / payout account token が保存されていないか確認する
 
 ## スクリプト
 
@@ -40,6 +40,30 @@ DB 内の保存状態まで確認する:
 
 ```bash
 python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --compose-dir /home/buchi/WebProgramming-ActiveLearner
+```
+
+既存行を値を表示せずに実測する:
+
+```bash
+docker compose exec -T postgres psql -U postgres -d app_db -P pager=off -c "
+SELECT
+  count(*) AS profiles,
+  count(*) FILTER (WHERE payout_account_token_ciphertext IS NOT NULL) AS encrypted_tokens,
+  count(*) FILTER (
+    WHERE payout_account_token_ciphertext IS NOT NULL
+      AND octet_length(payout_account_token_nonce) = 12
+      AND payout_account_token_key_id IS NOT NULL
+  ) AS structurally_valid_tokens
+FROM seller_profiles;"
+```
+
+旧カラムが移行中のDBに残っている場合は、平文値を表示せず件数だけ確認します。
+
+```bash
+docker compose exec -T postgres psql -U postgres -d app_db -P pager=off -c "
+SELECT count(*) AS legacy_plaintext_rows
+FROM seller_profiles
+WHERE payout_account_token IS NOT NULL;"
 ```
 
 Docker API を使わず、直接 `psql` で到達できる環境では次も使えます。
@@ -83,6 +107,7 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
 - `seller_profile_get`
   - `200`
   - business email を復号した値として返す
+  - payout account token 自体は返さず、`has_payout_account_token=true` を返す
 - `logout_revokes_refresh_token`
   - `200`
   - refresh token を失効する
@@ -92,7 +117,7 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
 成功時の DB 内部検査出力例:
 
 ```text
-db_plaintext_inspection status=checked matched=yes f|f|f|t|t|t
+db_plaintext_inspection status=checked matched=yes f|f|f|t|t|t|t
 ```
 
 意味:
@@ -109,6 +134,8 @@ db_plaintext_inspection status=checked matched=yes f|f|f|t|t|t
   - `refresh_tokens.token_hash` に平文 refresh token が含まれない
 - 6つ目 `t`
   - `audit_events` に認証系イベントが残っている
+- 7つ目 `t`
+  - payout account token の暗号文・nonce・key id が保存され、暗号文に平文 token が含まれない
 
 ## 注意
 

@@ -203,7 +203,7 @@ support
 | phone number | AES-256-GCM + HMAC blind index | 個人情報 |
 | business address | AES-256-GCM | 個人情報・事業者情報 |
 | verification status | 通常保存 | 審査状態 |
-| payout account token | token のみ保存 | 口座情報本体は保持しない |
+| payout account token | AES-256-GCM | 口座情報本体は保持せず、決済事業者の token も秘密情報として保護する |
 
 事業者確認や本人確認書類を扱う場合、画像や書類そのものを DB に直接入れるのではなく、オブジェクトストレージに暗号化して置き、DB には参照 ID と状態だけを持たせます。
 
@@ -423,6 +423,38 @@ audit_events
 | 決済カード情報 | card number, CVV | 保存しない |
 | 決済参照 | provider payment id, last4 | 通常保存 |
 | 監査情報 | action, actor id, target id | 通常保存 |
+
+### payout account token の既存DB移行
+
+新規DBでは `payout_account_token_ciphertext`, `payout_account_token_nonce`,
+`payout_account_token_key_id` の3カラムだけを作成し、APIレスポンスには token 自体を返さず
+`has_payout_account_token` の真偽値だけを返します。
+
+既存DBでは、先にカラム追加を適用します。
+
+```bash
+docker compose exec -T postgres psql -U postgres -d app_db \
+  -f /docker-entrypoint-initdb.d/002_encrypt_payout_token.sql
+```
+
+旧 `payout_account_token` に値があるプロフィールは、所有者が
+`POST /api/seller/profile` から同じ token を再登録する必要があります。暗号文が保存された行だけ
+旧値を消去し、旧カラムがすべて空になったことを確認してから、平文カラムを削除します。
+
+```sql
+UPDATE seller_profiles
+SET payout_account_token = NULL
+WHERE payout_account_token_ciphertext IS NOT NULL;
+
+SELECT count(*) AS legacy_plaintext_rows
+FROM seller_profiles
+WHERE payout_account_token IS NOT NULL;
+
+ALTER TABLE seller_profiles DROP COLUMN payout_account_token;
+```
+
+SQLだけで旧tokenを暗号化しないのは、データ暗号鍵をPostgreSQLへ渡さず、アプリケーション側に
+限定するためです。移行完了までは旧平文カラムが残るため、バックアップも含めて移行期間を短くします。
 
 ## DB 権限方針
 

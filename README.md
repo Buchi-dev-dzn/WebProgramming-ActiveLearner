@@ -115,7 +115,7 @@ PostgreSQL 初期化 SQL は [`postgres/init/001_products.sql`](./postgres/init/
 認証・暗号化の方針:
 
 - password は `PBKDF2-HMAC-SHA-256` で hash 保存する
-- email と出品者連絡先は `AES-256-GCM` で暗号化する
+- email、出品者連絡先、payout account token は `AES-256-GCM` で暗号化する
 - email / phone の検索には `HMAC-SHA-256` の blind index を使う
 - access token は短命 JWT として発行する
 - refresh token は平文保存せず、HMAC hash を DB に保存し、refresh 時にローテーションする

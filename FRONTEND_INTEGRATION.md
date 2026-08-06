@@ -354,6 +354,9 @@ const profile = await apiRequest("/seller/profile", {
 });
 ```
 
+`payout_account_token` は送信時だけ使用し、サーバーでは AES-256-GCM で暗号化されます。
+取得レスポンスに token 自体は含まれず、登録状態を示す `has_payout_account_token` だけが返ります。
+
 自分のプロフィールを取得:
 
 ```javascript

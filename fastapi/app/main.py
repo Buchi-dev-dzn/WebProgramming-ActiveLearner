@@ -137,7 +137,7 @@ def seller_profile_to_dict(record: asyncpg.Record) -> dict[str, Any]:
             record["business_address_nonce"],
         ),
         "verification_status": record["verification_status"],
-        "has_payout_account_token": bool(record["payout_account_token"]),
+        "has_payout_account_token": bool(record["payout_account_token_ciphertext"]),
         "created_at": record["created_at"].isoformat(),
         "updated_at": record["updated_at"].isoformat(),
     }
@@ -970,6 +970,16 @@ async def upsert_seller_profile(
         address_value = payload.business_address.strip()
         address_ciphertext, address_nonce, address_key_id = encrypt_text(address_value)
 
+    payout_token_ciphertext = None
+    payout_token_nonce = None
+    payout_token_key_id = None
+    if payload.payout_account_token:
+        (
+            payout_token_ciphertext,
+            payout_token_nonce,
+            payout_token_key_id,
+        ) = encrypt_text(payload.payout_account_token)
+
     pool = require_db_pool()
     async with pool.acquire() as connection:
         record = await connection.fetchrow(
@@ -989,9 +999,11 @@ async def upsert_seller_profile(
                 business_address_ciphertext,
                 business_address_nonce,
                 business_address_key_id,
-                payout_account_token
+                payout_account_token_ciphertext,
+                payout_account_token_nonce,
+                payout_account_token_key_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (user_id)
             DO UPDATE SET
                 store_name = EXCLUDED.store_name,
@@ -1007,13 +1019,15 @@ async def upsert_seller_profile(
                 business_address_ciphertext = EXCLUDED.business_address_ciphertext,
                 business_address_nonce = EXCLUDED.business_address_nonce,
                 business_address_key_id = EXCLUDED.business_address_key_id,
-                payout_account_token = EXCLUDED.payout_account_token,
+                payout_account_token_ciphertext = EXCLUDED.payout_account_token_ciphertext,
+                payout_account_token_nonce = EXCLUDED.payout_account_token_nonce,
+                payout_account_token_key_id = EXCLUDED.payout_account_token_key_id,
                 updated_at = now()
             RETURNING id, user_id, store_name, store_description,
                       business_email_ciphertext, business_email_nonce,
                       phone_ciphertext, phone_nonce,
                       business_address_ciphertext, business_address_nonce,
-                      verification_status, payout_account_token,
+                      verification_status, payout_account_token_ciphertext,
                       created_at, updated_at
             """,
             user["id"],
@@ -1030,7 +1044,9 @@ async def upsert_seller_profile(
             address_ciphertext,
             address_nonce,
             address_key_id,
-            payload.payout_account_token,
+            payout_token_ciphertext,
+            payout_token_nonce,
+            payout_token_key_id,
         )
         await insert_audit_event(
             connection,
@@ -1211,7 +1227,7 @@ async def get_seller_profile(
                    business_email_ciphertext, business_email_nonce,
                    phone_ciphertext, phone_nonce,
                    business_address_ciphertext, business_address_nonce,
-                   verification_status, payout_account_token,
+                   verification_status, payout_account_token_ciphertext,
                    created_at, updated_at
             FROM seller_profiles
             WHERE user_id = $1

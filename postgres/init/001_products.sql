@@ -100,7 +100,9 @@ CREATE TABLE IF NOT EXISTS seller_profiles (
     business_address_nonce BYTEA,
     business_address_key_id TEXT,
     verification_status TEXT NOT NULL DEFAULT 'pending',
-    payout_account_token TEXT,
+    payout_account_token_ciphertext BYTEA,
+    payout_account_token_nonce BYTEA,
+    payout_account_token_key_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT seller_profiles_verification_status_allowed CHECK (
