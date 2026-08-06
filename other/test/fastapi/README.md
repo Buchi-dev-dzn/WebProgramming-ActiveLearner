@@ -1,6 +1,6 @@
 # FastAPI Test
 
-> 実装状況: 2026-07-24 時点。`check_fastapi.py` は商品やユーザーを作成するため、使い捨ての学習環境で実行してください。
+> 実装状況: 2026-08-06 時点。`check_fastapi.py` は商品やユーザーを作成するため、使い捨ての学習環境で実行してください。
 
 このテストは、Mac ホストなど VM 外部から `fastapi-app` の API 応答と劣化時の振る舞いを確認するためのものです。
 
@@ -12,7 +12,9 @@
 - `/api/products` で PostgreSQL に商品を作成できるか
 - `/api/product?sku=...` で作成済み商品を取得できるか
 - `/api/product/stock` で在庫更新ができるか
-- `/api/auth/register` で seller ユーザーを登録できるか
+- 商品登録・在庫更新が監査ログに記録されるか
+- `/api/auth/register` で role なしの統合アカウントを登録できるか
+- 未認証の商品登録が `401` になるか
 - `/api/auth/login` で JWT を取得できるか
 - `/api/auth/me` で Bearer token からユーザー情報を取得できるか
 - `/api/seller/profile` で出品者プロフィールを作成・取得できるか
@@ -69,7 +71,7 @@ docker compose start postgres
   - 更新後の `stock` を返す
 - `POST /api/auth/register`
   - `201`
-  - 登録した `email` と `role=seller` を返す
+  - 登録した `email` と `roles=["buyer", "seller"]` を返す
 - `POST /api/auth/login`
   - `200`
   - `access_token` を返す

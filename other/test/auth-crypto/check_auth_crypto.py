@@ -173,14 +173,15 @@ def main() -> None:
         f"{base}/api/auth/register",
         args.timeout,
         method="POST",
-        payload={"email": email, "password": password, "role": "seller"},
+        payload={"email": email, "password": password},
     )
     add_case(
         cases,
-        "register_seller",
+        "register_unified_account",
         register_status == 201
         and register_payload is not None
-        and register_payload.get("user", {}).get("email") == email,
+        and register_payload.get("user", {}).get("email") == email
+        and register_payload.get("user", {}).get("roles") == ["buyer", "seller"],
         register_body,
     )
 
@@ -188,7 +189,7 @@ def main() -> None:
         f"{base}/api/auth/register",
         args.timeout,
         method="POST",
-        payload={"email": email.upper(), "password": password, "role": "seller"},
+        payload={"email": email.upper(), "password": password},
     )
     add_case(
         cases,
@@ -220,7 +221,8 @@ def main() -> None:
         and isinstance(token, str)
         and isinstance(refresh_token, str)
         and len(token.split(".")) == 3
-        and login_payload.get("token_type") == "bearer",
+        and login_payload.get("token_type") == "bearer"
+        and login_payload.get("user", {}).get("roles") == ["buyer", "seller"],
         login_body,
     )
 
@@ -237,6 +239,7 @@ def main() -> None:
         me_status == 200
         and me_payload is not None
         and me_payload.get("user", {}).get("email") == email
+        and me_payload.get("user", {}).get("roles") == ["buyer", "seller"]
         and me_payload.get("request_id") == request_id_header,
         me_body,
     )
@@ -254,7 +257,8 @@ def main() -> None:
         refresh_status == 200
         and isinstance(refreshed_token, str)
         and isinstance(refreshed_refresh_token, str)
-        and refreshed_refresh_token != refresh_token,
+        and refreshed_refresh_token != refresh_token
+        and refresh_payload.get("user", {}).get("roles") == ["buyer", "seller"],
         refresh_body,
     )
     if refreshed_token:

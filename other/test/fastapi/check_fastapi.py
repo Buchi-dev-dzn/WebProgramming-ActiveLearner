@@ -150,7 +150,6 @@ def main() -> None:
             {
                 "email": user_email,
                 "password": user_password,
-                "role": "seller",
             },
         )
         auth_login_case = request_json_case(
@@ -165,6 +164,21 @@ def main() -> None:
             },
         )
         cases.extend([auth_register_case, auth_login_case])
+
+        unauthenticated_create_case = request_json_case(
+            "product_create_requires_authentication",
+            "POST",
+            f"https://{args.target}:{args.https_port}/api/products",
+            401,
+            timeout,
+            {
+                "sku": f"unauth-{product_sku}",
+                "name": "Unauthorized Product",
+                "price_cents": 1,
+                "stock": 1,
+            },
+        )
+        cases.append(unauthenticated_create_case)
         try:
             login_payload = json.loads(auth_login_case.detail)
             token = login_payload.get("access_token")
@@ -218,16 +232,34 @@ def main() -> None:
         )
         cases.extend([create_case, get_case, stock_case, list_case, missing_case])
 
+        product_audit_case = request_json_case(
+            "product_mutations_are_audited",
+            "GET",
+            f"https://{args.target}:{args.https_port}/api/auth/audit-events?limit=25",
+            200,
+            timeout,
+            headers=auth_headers,
+        )
+        cases.append(product_audit_case)
+
         try:
             created_payload = json.loads(create_case.detail)
             fetched_payload = json.loads(get_case.detail)
             stock_payload = json.loads(stock_case.detail)
             list_payload = json.loads(list_case.detail)
+            product_audit_payload = json.loads(product_audit_case.detail)
+            product_audit_actions = {
+                item.get("action")
+                for item in product_audit_payload.get("items", [])
+                if isinstance(item, dict)
+            }
             product_shape_ok = (
                 created_payload.get("item", {}).get("sku") == product_sku
                 and fetched_payload.get("item", {}).get("sku") == product_sku
                 and stock_payload.get("item", {}).get("stock") == 3
                 and isinstance(list_payload.get("items"), list)
+                and {"product_create", "product_stock_update"}
+                <= product_audit_actions
             )
         except json.JSONDecodeError:
             product_shape_ok = False
@@ -275,10 +307,12 @@ def main() -> None:
             seller_payload = json.loads(seller_get_case.detail)
             auth_shape_ok = (
                 register_payload.get("user", {}).get("email") == user_email
-                and register_payload.get("user", {}).get("role") == "seller"
+                and register_payload.get("user", {}).get("roles") == ["buyer", "seller"]
                 and isinstance(token, str)
                 and bool(token)
+                and login_payload.get("user", {}).get("roles") == ["buyer", "seller"]
                 and me_payload.get("user", {}).get("email") == user_email
+                and me_payload.get("user", {}).get("roles") == ["buyer", "seller"]
                 and seller_payload.get("seller_profile", {}).get("store_name")
                 == "Codex Test Store"
             )

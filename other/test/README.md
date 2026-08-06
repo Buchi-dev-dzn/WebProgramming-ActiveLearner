@@ -1,6 +1,6 @@
 # Security Layer Tests
 
-> 実装状況: 2026-07-24 時点。各スクリプトの CLI が実行仕様の正本です。本文中の「結果」セクションは過去の実測記録であり、現在の稼働状態ではありません。Compose はホストの `443` だけを公開します。
+> 実装状況: 2026-08-06 時点。各スクリプトの CLI が実行仕様の正本です。本文中の「結果」セクションは過去の実測記録であり、現在の稼働状態ではありません。Compose はホストの `443` だけを公開します。
 
 このディレクトリには、Mac ホストなど Linux VM の外側から `External Firewall`, `NIPS`, `WAF`, `Reverse Proxy`, `FastAPI` の動作を検証するためのテストを置きます。
 
@@ -280,7 +280,7 @@ python check_auth_crypto.py 172.16.30.197
 
 - `POST /api/auth/register`
   - seller ユーザーを登録できた
-  - `role=seller`, `is_active=true` を返した
+- （旧仕様の実測記録）`role=seller`, `is_active=true` を返した
 - `POST /api/auth/register` の重複 email
   - `409 {"detail":{"error":"email_already_registered"}}` を返した
   - email の大文字小文字差分を正規化して同一扱いできている

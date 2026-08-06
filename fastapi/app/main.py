@@ -16,7 +16,7 @@ import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Cookie, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
 
@@ -66,14 +66,36 @@ class ProductStockUpdate(BaseModel):
 
 
 class UserRegister(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=256)
-    role: str = Field(default="customer", pattern=r"^(customer|seller)$")
 
 
 class UserLogin(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=256)
+
+
+class PublicUser(BaseModel):
+    id: int
+    email: str
+    roles: list[str]
+    is_active: bool
+    created_at: str
+    last_login_at: str | None
+
+
+class UserResponse(BaseModel):
+    user: PublicUser
+    request_id: str | None
+
+
+class AuthResponse(UserResponse):
+    access_token: str
+    token_type: str
+    expires_in: int
+    refresh_expires_in: int
 
 
 class SellerProfileUpsert(BaseModel):
@@ -106,11 +128,18 @@ def product_to_dict(record: asyncpg.Record) -> dict[str, Any]:
     }
 
 
+def roles_for_legacy_role(role: str) -> list[str]:
+    """Map stored legacy roles to the public capability-based representation."""
+    if role in {"member", "customer", "seller"}:
+        return ["buyer", "seller"]
+    return [role]
+
+
 def user_to_public_dict(record: asyncpg.Record, email: str) -> dict[str, Any]:
     return {
         "id": record["id"],
         "email": email,
-        "role": record["role"],
+        "roles": roles_for_legacy_role(record["role"]),
         "is_active": record["is_active"],
         "created_at": record["created_at"].isoformat(),
         "last_login_at": (
@@ -293,7 +322,7 @@ def create_access_token(user_id: int, role: str) -> str:
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
-        "role": role,
+        "roles": roles_for_legacy_role(role),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ACCESS_TOKEN_SECONDS)).timestamp()),
         "iss": JWT_ISSUER,
@@ -355,7 +384,7 @@ async def current_user_record(authorization: str | None) -> asyncpg.Record:
 
 async def require_role(authorization: str | None, allowed_roles: set[str]) -> asyncpg.Record:
     user = await current_user_record(authorization)
-    if user["role"] not in allowed_roles:
+    if not set(roles_for_legacy_role(user["role"])) & allowed_roles:
         raise HTTPException(status_code=403, detail={"error": "insufficient_role"})
     return user
 
@@ -472,7 +501,15 @@ async def lifespan(app: FastAPI):
             db_pool = None
 
 
-app = FastAPI(title="security-ec-fastapi", lifespan=lifespan)
+app = FastAPI(
+    title="security-ec-fastapi",
+    version="2.0.0",
+    description=(
+        "EC API with unified buyer/seller accounts. Registration accepts only email "
+        "and password; authorization is enforced by the backend."
+    ),
+    lifespan=lifespan,
+)
 
 if CORS_ALLOWED_ORIGINS:
     app.add_middleware(
@@ -587,7 +624,7 @@ async def api_info(request: Request):
     }
 
 
-@app.post("/api/auth/register", status_code=201)
+@app.post("/api/auth/register", status_code=201, response_model=UserResponse)
 async def register_user(payload: UserRegister, request: Request):
     email = normalize_email(payload.email)
     email_ciphertext, email_nonce, email_key_id = encrypt_text(email)
@@ -609,7 +646,7 @@ async def register_user(payload: UserRegister, request: Request):
                     password_iterations,
                     role
                 )
-                VALUES ($1, $2, $3, $4, $5, 'pbkdf2_hmac_sha256', $6, $7)
+                VALUES ($1, $2, $3, $4, $5, 'pbkdf2_hmac_sha256', $6, 'member')
                 RETURNING id, email_ciphertext, email_nonce, role, is_active,
                           created_at, last_login_at
                 """,
@@ -619,7 +656,6 @@ async def register_user(payload: UserRegister, request: Request):
                 email_key_id,
                 password_hash,
                 PASSWORD_ITERATIONS,
-                payload.role,
             )
         except asyncpg.UniqueViolationError as error:
             raise HTTPException(
@@ -641,7 +677,7 @@ async def register_user(payload: UserRegister, request: Request):
     }
 
 
-@app.post("/api/auth/login")
+@app.post("/api/auth/login", response_model=AuthResponse)
 async def login_user(payload: UserLogin, request: Request, response: Response):
     email = normalize_email(payload.email)
     email_lookup_hash = lookup_hmac(email)
@@ -762,7 +798,7 @@ async def login_user(payload: UserLogin, request: Request, response: Response):
     }
 
 
-@app.post("/api/auth/refresh")
+@app.post("/api/auth/refresh", response_model=AuthResponse)
 async def refresh_access_token(
     request: Request,
     response: Response,
@@ -890,7 +926,7 @@ async def logout_user(
     return {"revoked": True, "request_id": extract_request_id(request)}
 
 
-@app.get("/api/auth/me")
+@app.get("/api/auth/me", response_model=UserResponse)
 async def auth_me(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -938,7 +974,7 @@ async def upsert_seller_profile(
     authorization: str | None = Header(default=None),
 ):
     user = await current_user_record(authorization)
-    if user["role"] not in {"seller", "admin"}:
+    if not set(roles_for_legacy_role(user["role"])) & {"seller", "admin"}:
         raise HTTPException(status_code=403, detail={"error": "seller_role_required"})
 
     business_email_hash = None
@@ -1274,26 +1310,36 @@ async def create_product(
     request: Request,
     authorization: str | None = Header(default=None),
 ):
-    await require_role(authorization, {"seller", "admin"})
+    user = await require_role(authorization, {"seller", "admin"})
     pool = require_db_pool()
     async with pool.acquire() as connection:
         try:
             record = await connection.fetchrow(
                 """
-                INSERT INTO products (sku, name, price_cents, stock)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO products (sku, name, price_cents, stock, owner_user_id)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id, sku, name, price_cents, stock, created_at, updated_at
                 """,
                 product.sku,
                 product.name,
                 product.price_cents,
                 product.stock,
+                user["id"],
             )
         except asyncpg.UniqueViolationError as error:
             raise HTTPException(
                 status_code=409,
                 detail={"error": "product_sku_already_exists"},
             ) from error
+        await insert_audit_event(
+            connection,
+            request,
+            "product_create",
+            actor_user_id=user["id"],
+            target_type="product",
+            target_id=str(record["id"]),
+            details={"sku": record["sku"]},
+        )
     return {
         "item": product_to_dict(record),
         "request_id": extract_request_id(request),
@@ -1329,7 +1375,7 @@ async def update_product_stock(
     request: Request,
     authorization: str | None = Header(default=None),
 ):
-    await require_role(authorization, {"seller", "admin"})
+    user = await require_role(authorization, {"seller", "admin"})
     pool = require_db_pool()
     async with pool.acquire() as connection:
         record = await connection.fetchrow(
@@ -1338,13 +1384,31 @@ async def update_product_stock(
             SET stock = $2,
                 updated_at = now()
             WHERE sku = $1
+              AND (owner_user_id = $3 OR $4)
             RETURNING id, sku, name, price_cents, stock, created_at, updated_at
             """,
             update.sku,
             update.stock,
+            user["id"],
+            user["role"] == "admin",
         )
-    if record is None:
-        raise HTTPException(status_code=404, detail={"error": "product_not_found"})
+        if record is None:
+            existing = await connection.fetchval(
+                "SELECT 1 FROM products WHERE sku = $1",
+                update.sku,
+            )
+            if existing:
+                raise HTTPException(status_code=403, detail={"error": "not_product_owner"})
+            raise HTTPException(status_code=404, detail={"error": "product_not_found"})
+        await insert_audit_event(
+            connection,
+            request,
+            "product_stock_update",
+            actor_user_id=user["id"],
+            target_type="product",
+            target_id=str(record["id"]),
+            details={"sku": record["sku"], "stock": record["stock"]},
+        )
     return {
         "item": product_to_dict(record),
         "request_id": extract_request_id(request),

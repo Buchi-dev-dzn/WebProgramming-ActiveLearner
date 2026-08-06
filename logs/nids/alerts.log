@@ -124,3 +124,4 @@
 {"action": "nids_ingest_failed", "component": "nids", "error": "<urlopen error [Errno 111] Connection refused>", "severity": "warning", "timestamp": "2026-08-06T10:05:22.659440+00:00"}
 {"action": "sensor_heartbeat", "component": "nids", "event": "sensor_started", "severity": "info", "source_dir": "/sources", "target_id": "nids", "target_type": "sensor", "timestamp": "2026-08-06T13:16:47.743635+00:00"}
 {"action": "nids_ingest_failed", "component": "nids", "error": "<urlopen error [Errno 111] Connection refused>", "severity": "warning", "timestamp": "2026-08-06T13:16:48.177333+00:00"}
+{"action": "sensor_heartbeat", "component": "nids", "event": "sensor_started", "severity": "info", "source_dir": "/sources", "target_id": "nids", "target_type": "sensor", "timestamp": "2026-08-06T14:42:20.503754+00:00"}

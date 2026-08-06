@@ -1,6 +1,6 @@
 # Auth Crypto Test
 
-> 実装状況: 2026-07-24 時点。`check_auth_crypto.py --help` とスクリプト内の検証ケースを正本とします。テストはユーザーと監査データを DB に作成します。
+> 実装状況: 2026-08-06 時点。`check_auth_crypto.py --help` とスクリプト内の検証ケースを正本とします。テストはユーザーと監査データを DB に作成します。
 
 このディレクトリには、認証・暗号化・出品者プロフィール基盤を検証するためのテストを置きます。
 
@@ -76,9 +76,9 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
 
 ## 期待値
 
-- `register_seller`
+- `register_unified_account`
   - `201`
-  - 登録した email と `role=seller` を返す
+  - role なしで登録し、email と `roles=["buyer", "seller"]` を返す
 - `duplicate_email_rejected`
   - `409`
   - 大文字小文字を変えた同一 email も重複として扱う

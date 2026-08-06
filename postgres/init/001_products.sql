@@ -45,20 +45,26 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     password_algorithm TEXT NOT NULL DEFAULT 'pbkdf2_hmac_sha256',
     password_iterations INTEGER NOT NULL DEFAULT 600000,
-    role TEXT NOT NULL DEFAULT 'customer',
+    role TEXT NOT NULL DEFAULT 'member',
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ,
     failed_login_count INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
-    CONSTRAINT users_role_allowed CHECK (role IN ('customer', 'seller', 'admin', 'support')),
+    CONSTRAINT users_role_allowed CHECK (role IN ('member', 'customer', 'seller', 'admin', 'support')),
     CONSTRAINT users_password_algorithm_allowed CHECK (password_algorithm = 'pbkdf2_hmac_sha256'),
     CONSTRAINT users_password_iterations_min CHECK (password_iterations >= 600000)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lookup_hash
 ON users (email_lookup_hash);
+
+ALTER TABLE products
+ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id);
+
+CREATE INDEX IF NOT EXISTS idx_products_owner_user_id
+ON products (owner_user_id);
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     id BIGSERIAL PRIMARY KEY,

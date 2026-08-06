@@ -1,6 +1,6 @@
 # フロントエンドから FastAPI を利用する方法
 
-> 状態: 連携仕様書です。React/Vite の実装自体はこのリポジトリに含まれていません。2026-07-24 時点の FastAPI・WAF・CORS 設定に合わせたクライアント実装の指針を示します。
+> 状態: 連携仕様書です。React/Vite の実装自体はこのリポジトリに含まれていません。2026-08-06 時点の FastAPI・WAF・CORS 設定に合わせたクライアント実装の指針を示します。
 
 ## 1. 最初に理解しておくこと
 
@@ -185,18 +185,16 @@ const result = await apiRequest("/auth/register", {
   body: JSON.stringify({
     email: "user@example.com",
     password: "example-password",
-    role: "customer",
   }),
 });
 ```
 
-出品者として登録する場合は、`role` を `seller` にします。
+登録時に会員種別は選択しません。すべての新規アカウントに購入・出品権限が付与されます。`role` は管理者権限の自己付与を防ぐため、送信すると `422` になります。
 
 ```json
 {
-  "email": "seller@example.com",
-  "password": "example-password",
-  "role": "seller"
+  "email": "user@example.com",
+  "password": "example-password"
 }
 ```
 
@@ -227,7 +225,7 @@ const accessToken = session.access_token;
   "user": {
     "id": 1,
     "email": "user@example.com",
-    "role": "customer"
+    "roles": ["buyer", "seller"]
   }
 }
 ```
@@ -331,11 +329,11 @@ const result = await apiRequest("/product/stock", {
 });
 ```
 
-商品登録と在庫更新には、`seller`または`admin`のaccess tokenが必要です。フロントエンドの表示制御に加えて、FastAPI側でも権限を検証します。
+商品登録は統合アカウントまたは管理者に許可されます。在庫更新は商品の所有者または管理者だけに許可されます。未認証は `401`、権限不足や他ユーザーの商品更新は `403` となり、FastAPI側で必ず検証します。
 
 ## 7. 出品者プロフィールAPI
 
-プロフィール登録・更新には、`seller`または`admin`のaccess tokenが必要です。
+プロフィール登録・更新には、統合アカウントまたは管理者のaccess tokenが必要です。
 
 ```javascript
 const profile = await apiRequest("/seller/profile", {
@@ -455,7 +453,7 @@ curl -k -i "https://127.0.0.1/api/products?limit=20&offset=0"
 curl -k -i \
   -X POST \
   -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"example-password","role":"customer"}' \
+  -d '{"email":"user@example.com","password":"example-password"}' \
   https://127.0.0.1/api/auth/register
 ```
 

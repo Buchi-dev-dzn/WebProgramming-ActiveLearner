@@ -1,6 +1,6 @@
 # FastAPI Application
 
-> 実装状況: 2026-07-24 時点。エンドポイントの正本は `app/main.py` です。
+> 実装状況: 2026-08-06 時点。エンドポイントの正本は `app/main.py` です。
 
 このディレクトリには、内部 API サービスとして動く `fastapi-app` の実装を置きます。
 
@@ -23,13 +23,13 @@
 - `GET /api/products`
   - 商品一覧を返す
 - `POST /api/products`
-  - 商品を作成する
+  - 統合アカウントまたは admin が所有者として商品を作成する
 - `GET /api/product?sku=...`
   - SKU 指定で商品を 1 件返す
 - `POST /api/product/stock`
-  - SKU 指定で在庫数を更新する
+  - 商品所有者または admin が SKU 指定で在庫数を更新する
 - `POST /api/auth/register`
-  - email を AES-256-GCM で暗号化し、password を PBKDF2-HMAC-SHA-256 でハッシュ化してユーザー登録する
+  - `email` と `password` だけを受け取り、購入・出品可能な統合アカウントを登録する（`role` 入力は禁止）
 - `POST /api/auth/login`
   - email の HMAC blind index でユーザー検索し、password hash を検証して access token と refresh token を返す
 - `POST /api/auth/refresh`
@@ -41,7 +41,7 @@
 - `GET /api/auth/audit-events`
   - Bearer token のユーザー本人に紐づく監査イベントを返す
 - `POST /api/seller/profile`
-  - seller / admin ユーザーの出品者プロフィールを作成または更新する
+  - 統合アカウント / admin の出品者プロフィールを作成または更新する
 - `GET /api/seller/profile`
   - Bearer token に紐づく出品者プロフィールを返す
 - `GET /api/security/audit-events`
@@ -64,7 +64,7 @@
 - email や出品者連絡先は `AES-256-GCM` で暗号化し、検索には `HMAC-SHA-256` の blind index を使う
 - refresh token は平文保存せず、`JWT_SECRET_KEY_B64` を使った HMAC-SHA-256 の token hash として保存する
 - ログイン失敗回数と一時ロック状態を `users` に保持する
-- 登録、ログイン、ログイン失敗、ロック、refresh、logout、出品者プロフィール更新を `audit_events` に記録する
+- 登録、ログイン、ログイン失敗、ロック、refresh、logout、商品登録、在庫更新、出品者プロフィール更新を `audit_events` に記録する
 - JWT, 暗号鍵, 平文 password, password hash, ciphertext, lookup hash はログに出さない前提で扱う
 - `JWT_SECRET_KEY_B64`, `DATA_ENCRYPTION_KEY_B64`, `EMAIL_LOOKUP_KEY_B64` は学習用には Compose の environment で渡しているが、本番では secret manager などへ移す
 
@@ -96,6 +96,8 @@
 - `auth_refresh_failed`
 - `auth_logout`
 - `seller_profile_upsert`
+- `product_create`
+- `product_stock_update`
 
 これらを `audit_events` に保存する。`source_ip_hash` は IP をそのまま残さず HMAC hash として扱い、`user_agent_summary` は長さと制御文字を抑えた要約だけを保存する。
 
@@ -110,9 +112,21 @@
 
 ## DB 初期化の注意
 
-`refresh_tokens`, `users.failed_login_count`, `users.locked_until`, `audit_events.severity`, `audit_events.details` は [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql) で定義している。
+新規DBは [postgres/init/001_products.sql](/home/buchi/WebProgramming-ActiveLearner/postgres/init/001_products.sql)、既存DBの統合アカウント移行は `postgres/init/003_unified_accounts.sql` で定義している。移行は `customer` / `seller` を `member` に変換するが、refresh token テーブルには触れない。
 
 既存の `postgres_data` volume が残っている環境では、PostgreSQL の docker-entrypoint 初期化 SQL は自動再実行されない。その場合は管理者ユーザーで SQL を適用するか、学習環境であれば volume を再作成してから起動する。
+
+既存DBへは次のように適用する。refresh token の行は更新・削除されない。
+
+```bash
+docker compose exec -T postgres psql -U postgres -d app_db < postgres/init/003_unified_accounts.sql
+```
+
+権限変換の単体テストは FastAPI 依存パッケージを導入した環境で実行する。
+
+```bash
+PYTHONPATH=fastapi python -m unittest discover -s fastapi/tests
+```
 
 例:
 
@@ -120,17 +134,19 @@
 curl -k -i https://127.0.0.1/api/products
 curl -k -i https://127.0.0.1/api/product?sku=sample-001
 curl -k -i https://127.0.0.1/api/products \
+  -H 'Authorization: Bearer <access token>' \
   -H 'Content-Type: application/json' \
   -d '{"sku":"sample-001","name":"Sample Product","price_cents":1200,"stock":10}'
 curl -k -i https://127.0.0.1/api/product/stock \
+  -H 'Authorization: Bearer <access token>' \
   -H 'Content-Type: application/json' \
   -d '{"sku":"sample-001","stock":8}'
 curl -k -i https://127.0.0.1/api/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"seller@example.test","password":"example-password-123","role":"seller"}'
+  -d '{"email":"user@example.test","password":"example-password-123"}'
 curl -k -i https://127.0.0.1/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"seller@example.test","password":"example-password-123"}'
+  -d '{"email":"user@example.test","password":"example-password-123"}'
 curl -k -i https://127.0.0.1/api/auth/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refresh_token":"<refresh token>"}'

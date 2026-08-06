@@ -2,7 +2,17 @@
 
 EC / Marketplace 系サービスを題材に、外部公開入口、DMZ、Application 層、Database 層、監視レイヤーを 1 台の Linux VM 上で擬似的に分離して検証するための Docker Compose 構成です。
 
-> 実装状況: 2026-07-24 時点。現行仕様の正本は `docker-compose.yml`、各サービス設定、`fastapi/app/main.py`、`postgres/init/001_products.sql` です。本文はそれらに合わせています。
+> 実装状況: 2026-08-06 時点。現行仕様の正本は `docker-compose.yml`、各サービス設定、`fastapi/app/main.py`、`postgres/init/001_products.sql`、`postgres/init/003_unified_accounts.sql` です。本文はそれらに合わせています。
+
+## 2026-08-06 アカウント仕様更新
+
+- 登録時の `role` 選択を廃止し、全新規ユーザーを購入・出品可能な統合アカウントとして登録
+- `login` / `refresh` / `me` の権限情報を `roles: ["buyer", "seller"]` 形式へ統一
+- 既存 `customer` / `seller` を `member` へ移行し、既存refresh tokenは維持
+- 商品登録・在庫更新を統合アカウントへ許可し、在庫更新は商品所有者またはadminに限定
+- 商品操作を監査ログへ記録し、APIドキュメントとテストを更新
+
+既存DBへの移行は [`postgres/init/003_unified_accounts.sql`](./postgres/init/003_unified_accounts.sql) を適用してください。
 
 このリポジトリで再現したい主題は「コンテナ化」ではなく、次の設計判断を説明・検証できるようにすることです。
 
@@ -102,7 +112,7 @@ Compose では次の Docker network で境界を分けています。
 
 ## DB 実装
 
-PostgreSQL 初期化 SQL は [`postgres/init/001_products.sql`](./postgres/init/001_products.sql) です。
+PostgreSQL 初期化 SQL は [`postgres/init/001_products.sql`](./postgres/init/001_products.sql)、既存DBの移行SQLは [`postgres/init/003_unified_accounts.sql`](./postgres/init/003_unified_accounts.sql) です。
 
 現在の主なテーブル:
 
