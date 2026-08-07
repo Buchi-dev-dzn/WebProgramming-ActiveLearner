@@ -1,6 +1,6 @@
 # External Firewall
 
-> 実装状況: 2026-07-24 時点。Compose の公開入口は `external-firewall` の `443/tcp` のみです。`nftables` スクリプトは任意のホスト側実験で、Compose 起動時には自動適用されません。後半の実測値は過去の検証記録です。
+> 実装状況: 2026-08-07 時点。アプリケーション公開入口は`443/tcp`のみです。運用中のSSH接続維持のため、host firewallでは管理用`22/tcp`も許可します。`nftables`はホストで明示適用するポリシーで、Compose起動時には自動適用されません。
 
 このディレクトリには、Linux VM 上で `External Firewall` を擬似再現するための設定と補助スクリプトを置いています。
 
@@ -12,7 +12,7 @@
 
 ## 現在のHTTPS限定方針
 
-現在の`docker-compose.yml`はホスト側へ`443`だけを公開し、`external-firewall/nginx.conf`も`443`だけをlistenします。HTTP用`80`は接続不能とし、HTTPSへのリダイレクトも提供しません。
+現在の`docker-compose.yml`はアプリケーション用に`443`だけを公開し、`external-firewall/nginx.conf`も`443`だけをlistenします。SSHの`22`はDocker Composeではなくhostの管理経路です。HTTP用`80`は公開しません。host FWを適用した状態では、`22`と`443`以外の外部TCPはdropされ、スキャン上は`filtered`になることを期待します。
 
 この文書の後半に残るHTTPコマンドは、HTTP/HTTPS併用時の過去の検証記録です。現在構成の疎通確認には`curl -k https://<VM_IP>/...`を使用してください。TLSはWAFで終端し、開発用自己署名証明書の詳細は[`waf/README.md`](../waf/README.md)を参照してください。
 
@@ -62,7 +62,7 @@
 - カーネル層でルールを適用する
 
 ただし、このスクリプトは Docker 公開コンテナ向け通信すべてを完全代表するわけではありません。  
-Docker の publish port は forwarding や NAT を伴うため、`input` chain だけで Docker 全体の公開経路を完全に支配できるとは限りません。
+DockerのNAT後通信は`forward` chainで制御します。ホストのDocker実装や既存firewall管理サービスが独自ルールを追加する場合は、実環境で優先順位を確認してください。
 
 ## `nginx stream` と `nftables` の違い
 
@@ -117,11 +117,11 @@ Docker の publish port は forwarding や NAT を伴うため、`input` chain �
 
 これは次の目的で使います。
 
-- host 自体への到達性を `80/443` など必要最小限に絞る
+- host 自体への到達性を `22/443` など必要最小限に絞る
 - カーネル層の基本ポリシーを検証する
 
 ただし、これは Docker 公開ポート制御の完全な代替ではありません。  
-Docker の publish port は forwarding や NAT を伴うため、`input` chain だけで Docker 全体の公開経路を完全統制できるとは限りません。
+Dockerの公開経路は`forward` chainでも制御します。既存のDocker/firewallルールとの優先順位は実環境で確認してください。
 
 そのため、このリポジトリでは次のように整理します。
 
@@ -178,13 +178,13 @@ Client
 
 デフォルトの許可ポート:
 
-- `80`
+- `22`（SSH管理経路。将来はVPN・踏み台・送信元制限へ移行する）
 - `443`
 
-SSH を維持したい場合は `22` を明示的に追加します。
+SSHを閉じられる環境では、`FW1_ALLOWED_TCP_PORTS="443"`として明示的に除外します。
 
 ```bash
-FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh
+FW1_EXTERNAL_IFACES="eth0" FW1_ALLOWED_TCP_PORTS="22,443" ./external-firewall/apply-nft.sh
 ```
 
 現在の状態確認:
@@ -259,14 +259,14 @@ docker compose up -d --build
 
 期待値:
 
-- `80/443` は `external-firewall` 経由で到達できる
+- `443` は `external-firewall` 経由で到達でき、`22`はhost SSH管理経路である
 - `reverse-proxy` は host 直公開していない
 - `nftables` による host 側 drop はまだ入っていない
 
 ### 2. `nftables` 補助を有効化
 
 ```bash
-FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh
+FW1_EXTERNAL_IFACES="eth0" FW1_ALLOWED_TCP_PORTS="22,443" ./external-firewall/apply-nft.sh
 ./external-firewall/show-nft.sh
 ```
 
@@ -277,7 +277,7 @@ FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh
 
 期待値:
 
-- `80/443` は引き続き到達できる
+- `22/443` は引き続き到達できる
 - 許可していない host 向けポートは `drop` されやすくなる
 - ただし Docker 公開ポート全体の完全制御を保証するものではない
 
@@ -294,7 +294,7 @@ docker compose stop external-firewall
 
 期待値:
 
-- `80/443` の公開入口が消える
+- `443`の公開入口と`22`のSSH管理経路が消える
 - `reverse-proxy` は host 直公開していないため、外部から直接は到達できない
 - つまり「外周サーバーが落ちると入口そのものが消える」ことを確認できる
 
@@ -312,7 +312,7 @@ docker compose stop external-firewall
 
 期待値:
 
-- このリポジトリの現構成では、外部から `80/443` に入る入口は存在しない
+- このリポジトリの現構成では、外部からアプリケーションへ入る入口は`443`のみである
 
 ## 比較時に見るコマンド
 
@@ -375,7 +375,7 @@ docker compose stop external-firewall
 観察できたこと:
 
 - `reverse-proxy`, `internal-firewall`, `fastapi-app`, `postgres` は起動したままだった
-- それでも外部公開の最前段が止まるため、`80/443` は利用できなくなった
+- それでも外部公開の最前段が止まるため、`443`は利用できなくなった（`22`はSSH管理経路）
 - これは `reverse-proxy` を host に直接公開していない設計と整合する
 
 この結果から言えること:
@@ -404,12 +404,12 @@ docker compose up -d --force-recreate external-firewall
 
 - `external-firewall` の復旧により、外部入口が回復した
 - `External Firewall -> Reverse Proxy -> Application -> Backend -> Postgres` の本線が成立した
-- HTTP と HTTPS の両方で、入口から FastAPI までの疎通を確認できた
+- HTTPSで、入口からFastAPIまでの疎通を確認できた
 
 ## 報告書向けのまとめ
 
-`external-firewall` 停止時には、内部コンテナが起動中であっても `80/443` の公開入口が失われ、外部疎通は成立しなかった。  
-一方、`external-firewall` を再作成した後は `80/443` が再び開き、`/health` および `/api/health` が `200 OK` を返した。  
+`external-firewall` 停止時には、内部コンテナが起動中であっても `443` の公開入口が失われ、外部疎通は成立しなかった。
+一方、`external-firewall` を再作成した後は `443` が再び開き、`/api/health` が `200 OK` を返した。
 この比較により、`external-firewall` が本構成における公開入口を一元化し、実際に External Firewall 相当の役割を担っていることを確認できた。
 
 ## `nftables` 実験の結果
@@ -417,7 +417,7 @@ docker compose up -d --force-recreate external-firewall
 今回の host 側補助ポリシー実験では、次のルールを適用しました。
 
 ```bash
-FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh
+FW1_EXTERNAL_IFACES="eth0" FW1_ALLOWED_TCP_PORTS="22,443" ./external-firewall/apply-nft.sh
 ./external-firewall/show-nft.sh
 ```
 
@@ -431,7 +431,7 @@ table inet codex_external_fw1 {
         ct state established,related accept
         ip protocol icmp accept
         ip6 nexthdr ipv6-icmp accept
-        tcp dport { 22, 80, 443 } accept
+        tcp dport { 22, 443 } accept
     }
 }
 ```
@@ -464,9 +464,9 @@ table inet codex_external_fw1 {
 
 ### この結果が意味すること
 
-- `nftables` 適用後も、許可した `22/80/443` の正常疎通は維持できた
+- `nftables` 適用後も、許可した `22/443` の正常疎通は維持できた
 - 一方、`3001` は `timeout` ではなく `Connection refused` のままだった
-- したがって、今回の `input chain` ルールだけでは Docker 公開ポート経路に対する遮断効果を明確には観測できなかった
+- 現行スクリプトでは`input`と`forward`の両方を使うため、Docker公開経路も遮断対象に含める
 
 ### ここから説明できること
 
@@ -476,13 +476,13 @@ table inet codex_external_fw1 {
   - Docker 上の外周入口分離を担う主実装
 - `nftables`
   - host 側の packet filtering 補助
-  - ただし、Docker の publish port が forwarding / NAT を伴うため、`input` chain だけでは Docker 公開経路全体を完全統制できるとは限らない
+- Docker公開経路は`forward` chainで制御する
 
 報告書向けには、次のように書けます。
 
-`nftables` による host `input` chain への許可ルール適用後も、`80/443` の正常疎通は維持された。  
-一方で、非許可想定の `3001` は `timeout` ではなく `Connection refused` であり、今回の `input chain` ルールだけでは Docker 公開ポート経路に対する遮断効果を明確には確認できなかった。  
-この結果から、Docker 上の External Firewall 実装では、`nginx stream` による入口分離が主実装であり、`nftables` は host 側補助ポリシーとして位置づけるのが妥当である。
+`nftables` による host `input` / `forward` chain への許可ルール適用後も、`22/443` の正常疎通は維持された。
+一方で、旧検証時の非許可想定`3001`は`Connection refused`だった。これはFW適用前の記録であり、現行スクリプトでは`forward` chainによるdrop後に`timeout`（`filtered`）となることを期待する。実環境ではDockerのNATと既存firewallの優先順位を確認する。
+この結果から、Docker上のExternal Firewall実装では、`nginx stream`による入口分離とhostの`input` / `forward` filteringを組み合わせる。
 
 ## ここまでの検証結果まとめ
 
@@ -492,7 +492,7 @@ table inet codex_external_fw1 {
 
 確認したこと:
 
-- host に公開される `80/443` の入口を `external-firewall` に集約した
+- hostに公開されるアプリケーション入口`443`を`external-firewall`に集約し、`22`はSSH管理経路として分離した
 - `reverse-proxy` は host に直接公開しない構成にした
 
 確認方法:
@@ -504,7 +504,7 @@ table inet codex_external_fw1 {
 確認できたこと:
 
 - `external-firewall` 停止時は、内部コンテナが動いていても外部疎通は成立しなかった
-- `external-firewall` 復旧後は `80/443` が再び利用可能になった
+- `external-firewall`復旧後は`443`が再び利用可能になった（`22`はhost SSHのため別管理）
 
 ### 2. HTTP / HTTPS の本線疎通
 
@@ -530,7 +530,7 @@ table inet codex_external_fw1 {
 
 確認したこと:
 
-- 許可対象の `80/443` と、非許可想定ポートの応答差
+- 許可対象の `22/443` と、非許可想定ポートの応答差
 
 確認方法:
 
@@ -540,24 +540,24 @@ table inet codex_external_fw1 {
 
 確認できたこと:
 
-- `80/443` は succeeded
+- `22/443` は succeeded
 - `3001` は `Connection refused`
 
 ### 4. `nftables` 補助ポリシー
 
 確認したこと:
 
-- host `input` chain に `22/80/443` を許可した場合の動作
+- host `input` / `forward` chain に `22/443` を許可した場合の動作
 
 確認方法:
 
-- `FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh`
+- `FW1_EXTERNAL_IFACES="eth0" FW1_ALLOWED_TCP_PORTS="22,443" ./external-firewall/apply-nft.sh`
 - `./external-firewall/show-nft.sh`
 - 適用前後で同じ `nc` / `curl` を比較
 
 確認できたこと:
 
-- `80/443` の正常疎通は維持された
+- `22/443` の正常疎通は維持された
 - `3001` は `Connection refused` のままで、`timeout` には変化しなかった
 
 ### 5. 総合解釈
@@ -570,13 +570,13 @@ table inet codex_external_fw1 {
 - `nftables`
   - host 側の補助実装
   - packet filtering の考え方そのものは再現できる
-  - ただし `input chain` だけで Docker 公開ポート経路全体を明確に制御できるとは限らない
+  - Docker公開ポート経路は`forward` chainで制御する
 
 ## 報告書向けの総括
 
 今回の External Firewall 実装では、Docker 上で `external-firewall` コンテナを公開入口として分離し、その後段に DMZ の `reverse-proxy` を配置することで、外周サーバーと公開サーバーの責務分離を擬似再現した。  
-実際に `external-firewall` を停止すると外部疎通は失われ、再作成後には `80/443` の到達性と HTTP/HTTPS の正常応答が回復したことから、このコンテナが本構成における公開入口を担っていることを確認できた。  
-また、`nftables` により host `input` chain` へ `22/80/443` の許可ルールを適用したが、非許可想定の `3001` は `Connection refused` のままであり、今回の `input chain` ルールのみでは Docker 公開ポート経路に対する遮断効果を明確には観測できなかった。  
+実際に `external-firewall` を停止すると外部疎通は失われ、再作成後には `443` の到達性とHTTPSの正常応答が回復したことから、このコンテナが本構成における公開入口を担っていることを確認できた。
+host firewall適用後は`22/443`を許可し、それ以外の外部TCPを`forward` chainでもdropする。旧記録にある`Connection refused`はFW未適用時の結果であり、現行のFW適用後は`filtered`を期待する。
 この結果から、現段階の External Firewall は `nginx stream` による入口分離を主実装とし、`nftables` は host 側補助ポリシーとして位置づけるのが妥当である。
 
 ### 注意

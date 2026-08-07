@@ -90,12 +90,12 @@
 
 | 項目 | 有効時 | 停止時 | メモ |
 | --- | --- | --- | --- |
-| `80/tcp` | open | filtered |  |
+| `80/tcp` | filtered | filtered | HTTPは公開しない |
 | `443/tcp` | open | filtered |  |
 | `22/tcp` | open | open |  |
 | `8080/tcp` | filtered | filtered |  |
 | `5432/tcp` | filtered | filtered |  |
-| 外部入口としての意味 | `443` が唯一の入口 | 入口自体が失われる |  |
+| 外部入口としての意味 | `443` が唯一のアプリ入口 | 入口自体が失われる | `22`はhost SSH管理経路 |
 
 推奨コマンド:
 

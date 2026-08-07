@@ -1,6 +1,6 @@
 # External Firewall Test
 
-> 実装状況: 2026-07-24 時点。Compose の期待値は `443` が公開、`80`・`5432`・`8000` などが非公開です。ホスト自身の SSH 等は Compose の管理対象外です。
+> 実装状況: 2026-08-07 時点。Composeのアプリケーション入口は`443`のみです。SSH管理用の`22`はhost firewallの許可対象で、Composeの公開ポートではありません。`80`・`5432`・`8000`などはFW適用後に`filtered`を期待します。
 
 このテストは、Mac ホストなど VM 外部から見たときに、公開入口が HTTPS 用 `443` に限定されているかを確認するためのものです。
 
@@ -41,7 +41,7 @@ python3 other/test/external-firewall/portscan.py 192.168.64.4 --ports 22,80,443 
 - `443`
   - `open`
 - それ以外
-  - `closed` または `filtered`
+  - FW未適用時は`closed`、FW適用時は`filtered`
 
 ## 有効時の意味
 
@@ -80,7 +80,7 @@ docker compose start external-firewall
 host 側の `nftables` も比較したい場合:
 
 ```bash
-FW1_ALLOWED_TCP_PORTS="22,80,443" ./external-firewall/apply-nft.sh
+FW1_EXTERNAL_IFACES="eth0" FW1_ALLOWED_TCP_PORTS="22,443" ./external-firewall/apply-nft.sh
 ./external-firewall/show-nft.sh
 ./external-firewall/remove-nft.sh
 ```
