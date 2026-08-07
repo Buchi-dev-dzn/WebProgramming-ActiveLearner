@@ -707,9 +707,11 @@ async def run_health_checks(request: Request) -> tuple[int, dict[str, Any]]:
                 async with pool.acquire() as connection:
                     await connection.fetchval("SELECT 1")
             checks["postgres"] = {"status": "ok"}
-        except Exception as error:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             overall_status = "degraded"
-            checks["postgres"] = {"status": "error", "detail": str(error)}
+            # Do not expose database driver errors or connection details through
+            # the public health endpoint.
+            checks["postgres"] = {"status": "error"}
 
     payload = {
         "service": "fastapi-api",
