@@ -11,6 +11,8 @@
 - 誤 password を `401` で拒否するか
 - 正しい password で login し、access token と refresh token を返すか
 - refresh token をローテーションし、古い refresh token を拒否するか
+- refresh / logout がCSRFトークンなしでは拒否されるか
+- refresh token再利用時に同じfamilyが失効するか
 - Bearer token 付きで `/api/auth/me` が通るか
 - Bearer token 付きで `/api/auth/audit-events` が通るか
 - token なしの `/api/auth/me` を `401` で拒否するか
@@ -69,7 +71,7 @@ WHERE payout_account_token IS NOT NULL;"
 Docker API を使わず、直接 `psql` で到達できる環境では次も使えます。
 
 ```bash
-python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mode psql --psql-dsn postgresql://app_user:app_password@127.0.0.1:5432/app_db
+python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mode psql --psql-dsn "$DATABASE_URL"
 ```
 
 ただし現在の Compose では PostgreSQL をホスト公開していないため、通常は `--db-mode docker` を使います。
@@ -96,6 +98,8 @@ python3 other/test/auth-crypto/check_auth_crypto.py 127.0.0.1 --check-db --db-mo
 - `old_refresh_token_rejected`
   - `401`
   - ローテーション済みの古い refresh token は使えない
+- `auth_refresh_reuse_detected`
+  - 再利用検知時に同一familyの未失効refresh tokenも失効する
 - `own_audit_events_visible`
   - `200`
   - `auth_register`, `auth_login` など本人の監査イベントを返す

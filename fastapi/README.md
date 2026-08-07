@@ -35,9 +35,9 @@
 - `POST /api/auth/login`
   - email の HMAC blind index でユーザー検索し、password hash を検証して access token と refresh token を返す
 - `POST /api/auth/refresh`
-  - refresh token を HMAC hash で照合し、古い token を失効して新しい access token / refresh token を返す
+  - OriginとCSRFトークンを確認し、refresh tokenをHMAC hashで照合する。古いtokenを失効して新しいaccess token / refresh tokenを返す
 - `POST /api/auth/logout`
-  - Bearer token と refresh token を確認し、refresh token を失効する
+  - OriginとCSRFトークンを確認し、Bearer tokenが期限切れでもrefresh Cookieを失効できる
 - `GET /api/auth/me`
   - Bearer token を検証して現在のユーザー情報を返す
 - `GET /api/auth/audit-events`
@@ -66,6 +66,9 @@
 - email や出品者連絡先は `AES-256-GCM` で暗号化し、検索には `HMAC-SHA-256` の blind index を使う
 - refresh token は平文保存せず、`JWT_SECRET_KEY_B64` を使った HMAC-SHA-256 の token hash として保存する
 - ログイン失敗回数と一時ロック状態を `users` に保持する
+- 認証APIに送信元IP・アカウント単位のアプリ内レート制限を適用する。複数インスタンスでは外部分散limiterも必要
+- 初期値は60秒あたりIP単位30回、アカウント単位10回で、`AUTH_RATE_*`環境変数で調整する
+- refresh token再利用を`auth_refresh_reuse_detected`としてcritical監査イベントに記録する
 - 登録、ログイン、ログイン失敗、ロック、refresh、logout、商品登録、在庫更新、出品者プロフィール更新を `audit_events` に記録する
 - JWT, 暗号鍵, 平文 password, password hash, ciphertext, lookup hash はログに出さない前提で扱う
 - `JWT_SECRET_KEY_B64`, `DATA_ENCRYPTION_KEY_B64`, `EMAIL_LOOKUP_KEY_B64` は学習用には Compose の environment で渡しているが、本番では secret manager などへ移す
@@ -96,6 +99,7 @@
 - `auth_login_blocked`
 - `auth_refresh`
 - `auth_refresh_failed`
+- `auth_refresh_reuse_detected`
 - `auth_logout`
 - `seller_profile_upsert`
 - `product_create`
@@ -151,8 +155,13 @@ curl -k -i https://127.0.0.1/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.test","password":"example-password-123"}'
 curl -k -i https://127.0.0.1/api/auth/refresh \
+  -H 'Cookie: refresh_token=<refresh token>; csrf_token=<csrf token>' \
   -H 'Content-Type: application/json' \
-  -d '{"refresh_token":"<refresh token>"}'
+  -H 'X-CSRF-Token: <csrf_token cookie value>'
+curl -k -i -X POST https://127.0.0.1/api/auth/logout \
+  -H 'Cookie: refresh_token=<refresh token>; csrf_token=<csrf token>' \
+  -H 'Authorization: Bearer <access token>' \
+  -H 'X-CSRF-Token: <csrf_token cookie value>'
 curl -k -i https://127.0.0.1/api/auth/audit-events \
   -H 'Authorization: Bearer <access token>'
 ```

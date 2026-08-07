@@ -1,27 +1,3 @@
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_roles
-        WHERE rolname = 'app_user'
-    ) THEN
-        CREATE ROLE app_user
-        LOGIN
-        PASSWORD 'app_password'
-        NOSUPERUSER
-        NOCREATEDB
-        NOCREATEROLE;
-    ELSE
-        ALTER ROLE app_user
-        WITH LOGIN
-        PASSWORD 'app_password'
-        NOSUPERUSER
-        NOCREATEDB
-        NOCREATEROLE;
-    END IF;
-END
-$$;
-
 CREATE TABLE IF NOT EXISTS products (
     id BIGSERIAL PRIMARY KEY,
     sku TEXT NOT NULL UNIQUE,

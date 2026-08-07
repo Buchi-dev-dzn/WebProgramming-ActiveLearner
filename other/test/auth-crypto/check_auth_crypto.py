@@ -2,6 +2,7 @@
 import argparse
 import http.cookiejar
 import json
+import os
 import shutil
 import ssl
 import subprocess
@@ -39,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--psql-dsn",
-        default="postgresql://app_user:app_password@127.0.0.1:5432/app_db",
+        default=os.environ.get("DATABASE_URL"),
         help="PostgreSQL DSN for --db-mode psql.",
     )
     parser.add_argument(
@@ -68,6 +69,13 @@ HTTP_OPENER = urllib.request.build_opener(
 def refresh_cookie_value() -> str | None:
     for cookie in COOKIE_JAR:
         if cookie.name == "refresh_token":
+            return cookie.value
+    return None
+
+
+def csrf_cookie_value() -> str | None:
+    for cookie in COOKIE_JAR:
+        if cookie.name == "csrf_token":
             return cookie.value
     return None
 
@@ -162,6 +170,10 @@ def run_direct_psql(dsn: str, sql: str) -> tuple[int, str, str]:
 
 def main() -> None:
     args = parse_args()
+    if args.check_db and args.db_mode == "psql" and not args.psql_dsn:
+        raise SystemExit(
+            "--psql-dsn or DATABASE_URL is required with --db-mode psql"
+        )
     base = f"https://{args.target}:{args.https_port}"
     marker = uuid.uuid4().hex[:12]
     email = f"security-{marker}@example.test"
@@ -248,6 +260,7 @@ def main() -> None:
         f"{base}/api/auth/refresh",
         args.timeout,
         method="POST",
+        headers={"X-CSRF-Token": csrf_cookie_value() or ""},
     )
     refreshed_token = refresh_payload.get("access_token") if refresh_payload else None
     refreshed_refresh_token = refresh_cookie_value()
@@ -269,7 +282,13 @@ def main() -> None:
         f"{base}/api/auth/refresh",
         args.timeout,
         method="POST",
-        headers={"Cookie": f"refresh_token={refresh_token}"},
+        headers={
+            "Cookie": (
+                f"refresh_token={refresh_token}; "
+                f"csrf_token={csrf_cookie_value() or ''}"
+            ),
+            "X-CSRF-Token": csrf_cookie_value() or "",
+        },
     )
     add_case(
         cases,
@@ -281,7 +300,7 @@ def main() -> None:
     audit_status, audit_payload, audit_body, _headers = request_json(
         f"{base}/api/auth/audit-events",
         args.timeout,
-        headers=auth_headers,
+        headers={**auth_headers, "X-CSRF-Token": csrf_cookie_value() or ""},
     )
     audit_items = audit_payload.get("items", []) if audit_payload else []
     audit_actions = {

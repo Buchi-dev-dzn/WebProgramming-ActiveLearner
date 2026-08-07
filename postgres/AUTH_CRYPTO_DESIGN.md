@@ -1,6 +1,6 @@
 # Auth and Database Cryptography Design
 
-> 状態: 2026-07-24 時点の実装済み認証・暗号化設計と将来候補を併記しています。実装範囲の正本は `init/001_products.sql` と `../fastapi/app/main.py` です。「候補」と記したテーブルや API は未実装です。
+> 状態: 2026-08-07 時点の実装済み認証・暗号化設計と将来候補を併記しています。実装範囲の正本は `init/000_create_app_user.sh`、`init/001_products.sql`、`../fastapi/app/main.py` です。「候補」と記した項目は未実装です。
 
 このドキュメントは、`FastAPI + PostgreSQL` のログイン機能と認証用データ管理、および今後の拡張候補を整理する設計メモです。
 
@@ -609,7 +609,9 @@ refresh token lifetime = 14 days
 
 refresh token は平文保存しません。API レスポンスとして利用者に一度だけ返し、DB には HMAC-SHA-256 の hash を保存します。
 
-refresh 時は古い refresh token を失効し、新しい refresh token を発行します。これにより、同じ refresh token の再利用を拒否できます。
+refresh 時は古い refresh token を失効し、新しい refresh token を発行します。失効済みtokenが再利用された場合は、同じfamilyの未失効tokenを全て失効し、`auth_refresh_reuse_detected`をcritical監査イベントとして記録します。
+
+`refresh` と `logout` はrefresh Cookieを使用する状態変更APIのため、許可Originの確認と、`csrf_token` Cookieを`X-CSRF-Token`ヘッダーへコピーする二重送信CSRF対策を行います。
 
 保存するもの:
 
@@ -725,6 +727,7 @@ HEAD:/api/security/monitoring/summary
 - `email_lookup_hash` は HMAC であり、平文 email ではない
 - `refresh_tokens.token_hash` は HMAC であり、平文 refresh token ではない
 - `audit_events` に登録、ログイン、refresh、logout、失敗系イベントが残る
+- `auth_refresh_reuse_detected`はcriticalとしてfamily失効とともに残る
 
 ### 経路確認
 
@@ -747,6 +750,7 @@ HEAD:/api/security/monitoring/summary
 - password reset token テーブル
 - MFA
 - key rotation
+- 複数FastAPIインスタンス間で共有する分散rate limiter
 - 旧 password hash 方式からの段階的移行
 - DB バックアップ暗号化
 

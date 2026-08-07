@@ -1,5 +1,6 @@
 import asyncio
 import base64
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -49,6 +50,15 @@ REFRESH_COOKIE_SAMESITE = os.environ.get(
 ).strip().lower()
 if REFRESH_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
     raise RuntimeError("REFRESH_COOKIE_SAMESITE must be lax, strict, or none")
+CSRF_COOKIE_NAME = os.environ.get("CSRF_COOKIE_NAME", "csrf_token")
+CSRF_HEADER_NAME = "x-csrf-token"
+AUTH_RATE_WINDOW_SECONDS = int(os.environ.get("AUTH_RATE_WINDOW_SECONDS", "60"))
+AUTH_RATE_LIMIT_PER_IP = int(os.environ.get("AUTH_RATE_LIMIT_PER_IP", "30"))
+AUTH_RATE_LIMIT_PER_ACCOUNT = int(
+    os.environ.get("AUTH_RATE_LIMIT_PER_ACCOUNT", "10")
+)
+_rate_limit_events: dict[str, deque[float]] = {}
+_rate_limit_lock = asyncio.Lock()
 db_pool: asyncpg.Pool | None = None
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -293,6 +303,49 @@ def source_ip(request: Request) -> str:
 
 def source_ip_hash(request: Request) -> bytes:
     return lookup_hmac(source_ip(request))
+
+
+async def enforce_auth_rate_limit(
+    request: Request,
+    account_key: str | None = None,
+) -> None:
+    """Apply a bounded per-process guard before expensive authentication work.
+
+    A distributed limiter still belongs at the edge for multi-instance
+    deployments; this prevents one application worker from being exhausted.
+    """
+    now = asyncio.get_running_loop().time()
+    keys = [f"ip:{source_ip(request)}"]
+    if account_key:
+        keys.append(f"account:{account_key}")
+    async with _rate_limit_lock:
+        for key in keys:
+            events = _rate_limit_events.setdefault(key, deque())
+            while events and now - events[0] >= AUTH_RATE_WINDOW_SECONDS:
+                events.popleft()
+            limit = (
+                AUTH_RATE_LIMIT_PER_ACCOUNT
+                if key.startswith("account:")
+                else AUTH_RATE_LIMIT_PER_IP
+            )
+            if len(events) >= limit:
+                retry_after = max(
+                    1,
+                    int(AUTH_RATE_WINDOW_SECONDS - (now - events[0])) + 1,
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail={"error": "auth_rate_limited"},
+                    headers={"Retry-After": str(retry_after)},
+                )
+        for key in keys:
+            _rate_limit_events[key].append(now)
+        if len(_rate_limit_events) > 10_000:
+            stale_before = now - AUTH_RATE_WINDOW_SECONDS
+            for key in list(_rate_limit_events):
+                events = _rate_limit_events[key]
+                if not events or events[-1] < stale_before:
+                    del _rate_limit_events[key]
 
 
 def user_agent_summary(request: Request) -> str | None:
@@ -544,7 +597,12 @@ if CORS_ALLOWED_ORIGINS:
         allow_origins=CORS_ALLOWED_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-Id",
+            "X-CSRF-Token",
+        ],
         expose_headers=["X-Request-Id"],
         max_age=600,
     )
@@ -562,6 +620,20 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
     )
 
 
+def set_csrf_cookie(response: Response, token: str | None = None) -> str:
+    csrf_token = token or secrets.token_urlsafe(32)
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=csrf_token,
+        max_age=REFRESH_TOKEN_SECONDS,
+        path="/",
+        secure=REFRESH_COOKIE_SECURE,
+        httponly=False,
+        samesite=REFRESH_COOKIE_SAMESITE,
+    )
+    return csrf_token
+
+
 def delete_refresh_cookie(response: Response) -> None:
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
@@ -570,6 +642,36 @@ def delete_refresh_cookie(response: Response) -> None:
         httponly=True,
         samesite=REFRESH_COOKIE_SAMESITE,
     )
+
+
+def delete_csrf_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=CSRF_COOKIE_NAME,
+        path="/",
+        secure=REFRESH_COOKIE_SECURE,
+        httponly=False,
+        samesite=REFRESH_COOKIE_SAMESITE,
+    )
+
+
+def validate_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin and origin not in CORS_ALLOWED_ORIGINS:
+        raise HTTPException(status_code=403, detail={"error": "origin_not_allowed"})
+
+
+def require_csrf(
+    request: Request,
+    csrf_cookie: str | None,
+    csrf_header: str | None,
+) -> None:
+    validate_origin(request)
+    if (
+        not csrf_cookie
+        or not csrf_header
+        or not secrets.compare_digest(csrf_cookie, csrf_header)
+    ):
+        raise HTTPException(status_code=403, detail={"error": "csrf_failed"})
 
 
 @app.middleware("http")
@@ -654,6 +756,11 @@ async def api_info(request: Request):
 @app.post("/api/auth/register", status_code=201, response_model=UserResponse)
 async def register_user(payload: UserRegister, request: Request):
     email = normalize_email(payload.email)
+    validate_origin(request)
+    await enforce_auth_rate_limit(
+        request,
+        hashlib.sha256(email.encode("utf-8")).hexdigest(),
+    )
     email_ciphertext, email_nonce, email_key_id = encrypt_text(email)
     email_lookup_hash = lookup_hmac(email)
     password_hash = hash_password(payload.password)
@@ -707,6 +814,11 @@ async def register_user(payload: UserRegister, request: Request):
 @app.post("/api/auth/login", response_model=AuthResponse)
 async def login_user(payload: UserLogin, request: Request, response: Response):
     email = normalize_email(payload.email)
+    validate_origin(request)
+    await enforce_auth_rate_limit(
+        request,
+        hashlib.sha256(email.encode("utf-8")).hexdigest(),
+    )
     email_lookup_hash = lookup_hmac(email)
     pool = require_db_pool()
     async with pool.acquire() as connection:
@@ -815,6 +927,7 @@ async def login_user(payload: UserLogin, request: Request, response: Response):
         )
 
     set_refresh_cookie(response, refresh_token)
+    set_csrf_cookie(response)
     return {
         "access_token": create_access_token(updated["id"], updated["role"]),
         "token_type": "bearer",
@@ -830,7 +943,11 @@ async def refresh_access_token(
     request: Request,
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    csrf_cookie: str | None = Cookie(default=None, alias=CSRF_COOKIE_NAME),
+    csrf_header: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
 ):
+    require_csrf(request, csrf_cookie, csrf_header)
+    await enforce_auth_rate_limit(request)
     if not refresh_token:
         raise HTTPException(
             status_code=401,
@@ -863,6 +980,25 @@ async def refresh_access_token(
             ):
                 refresh_failed = True
                 failed_actor_user_id = record["user_id"] if record is not None else None
+                if record is not None and record["revoked_at"] is not None:
+                    await connection.execute(
+                        """
+                        UPDATE refresh_tokens
+                        SET revoked_at = COALESCE(revoked_at, now())
+                        WHERE family_id = $1 AND revoked_at IS NULL
+                        """,
+                        record["family_id"],
+                    )
+                    await insert_audit_event(
+                        connection,
+                        request,
+                        "auth_refresh_reuse_detected",
+                        actor_user_id=record["user_id"],
+                        target_type="user",
+                        target_id=str(record["user_id"]),
+                        severity="critical",
+                        details={"family_id": str(record["family_id"])},
+                    )
             else:
                 new_refresh_token = await issue_refresh_token(
                     connection,
@@ -909,6 +1045,7 @@ async def refresh_access_token(
 
     email = decrypt_text(record["email_ciphertext"], record["email_nonce"])
     set_refresh_cookie(response, new_refresh_token)
+    set_csrf_cookie(response, csrf_cookie)
     return {
         "access_token": create_access_token(record["user_id"], record["role"]),
         "token_type": "bearer",
@@ -925,8 +1062,20 @@ async def logout_user(
     response: Response,
     authorization: str | None = Header(default=None),
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    csrf_cookie: str | None = Cookie(default=None, alias=CSRF_COOKIE_NAME),
+    csrf_header: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
 ):
-    user = await current_user_record(authorization)
+    require_csrf(request, csrf_cookie, csrf_header)
+    user = None
+    if authorization:
+        try:
+            user = await current_user_record(authorization)
+        except HTTPException as error:
+            # A logout request with an expired access token must still be able
+            # to revoke the refresh cookie.  Invalid non-authentication
+            # failures are not suppressed.
+            if error.status_code != 401:
+                raise
     pool = require_db_pool()
     async with pool.acquire() as connection:
         if refresh_token:
@@ -935,21 +1084,22 @@ async def logout_user(
                 UPDATE refresh_tokens
                 SET revoked_at = now()
                 WHERE token_hash = $1
-                  AND user_id = $2
+                  AND ($2::bigint IS NULL OR user_id = $2)
                   AND revoked_at IS NULL
                 """,
                 token_hmac(refresh_token),
-                user["id"],
+                user["id"] if user else None,
             )
         await insert_audit_event(
             connection,
             request,
             "auth_logout",
-            actor_user_id=user["id"],
-            target_type="user",
-            target_id=str(user["id"]),
+            actor_user_id=user["id"] if user else None,
+            target_type="user" if user else None,
+            target_id=str(user["id"]) if user else None,
         )
     delete_refresh_cookie(response)
+    delete_csrf_cookie(response)
     return {"revoked": True, "request_id": extract_request_id(request)}
 
 
@@ -1212,6 +1362,7 @@ async def security_monitoring_summary(
                 "auth_login_failed",
                 "auth_login_blocked",
                 "auth_refresh_failed",
+                "auth_refresh_reuse_detected",
             ],
         },
         "hids": {

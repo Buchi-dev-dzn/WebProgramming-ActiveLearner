@@ -83,6 +83,16 @@ services:
       CORS_ALLOWED_ORIGINS: "https://localhost:5173,https://127.0.0.1:5173"
       REFRESH_COOKIE_SECURE: "true"
       REFRESH_COOKIE_SAMESITE: "lax"
+      AUTH_RATE_WINDOW_SECONDS: "${AUTH_RATE_WINDOW_SECONDS:-60}"
+      AUTH_RATE_LIMIT_PER_IP: "${AUTH_RATE_LIMIT_PER_IP:-30}"
+      AUTH_RATE_LIMIT_PER_ACCOUNT: "${AUTH_RATE_LIMIT_PER_ACCOUNT:-10}"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - postgres
     expose:
@@ -110,6 +120,13 @@ services:
       - ./logs/nginx:/sources/reverse-proxy:ro
       - ./logs/internal-firewall:/sources/internal-firewall:ro
       - ./logs/nids:/alerts
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - external-firewall
       - nips
@@ -138,6 +155,13 @@ services:
     volumes:
       - ./fastapi/app:/watch/fastapi-app:ro
       - ./logs/hids:/alerts
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - fastapi-app
     networks:
@@ -150,6 +174,7 @@ services:
       POSTGRES_DB: app_db
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: "${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}"
+      POSTGRES_APP_PASSWORD: "${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro

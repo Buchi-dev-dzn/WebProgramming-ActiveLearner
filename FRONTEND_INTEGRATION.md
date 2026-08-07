@@ -245,6 +245,9 @@ const me = await apiRequest("/auth/me", {
 ```javascript
 const refreshed = await apiRequest("/auth/refresh", {
   method: "POST",
+  headers: {
+    "X-CSRF-Token": readCookie("csrf_token"),
+  },
 });
 
 const newAccessToken = refreshed.access_token;
@@ -259,11 +262,23 @@ await apiRequest("/auth/logout", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${accessToken}`,
+    "X-CSRF-Token": readCookie("csrf_token"),
   },
 });
 ```
 
 ログアウト後は、フロントエンドがメモリに保持しているaccess tokenも削除します。refresh token CookieはAPIが削除します。
+
+`refresh` と `logout` は、refresh token Cookieに加えてOrigin検証と二重送信CSRFトークンを要求します。ログイン時に設定される`csrf_token` Cookie（Path `/`）を読み取り、`X-CSRF-Token`ヘッダーへコピーしてください。refresh token本体はJavaScriptから読み取りません。
+
+```javascript
+function readCookie(name) {
+  return document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`))
+    ?.slice(name.length + 1) ?? "";
+}
+```
 
 ## 5. tokenの保存について
 

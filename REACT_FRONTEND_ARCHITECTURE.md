@@ -78,6 +78,7 @@ login
 ページ再読み込み・access token期限切れ
   -> POST /api/auth/refresh
   -> Cookieが自動送信される
+  -> csrf_token CookieをX-CSRF-Tokenヘッダーへコピー
   -> 新しいaccess tokenをメモリへ保存
   -> refresh token Cookieもローテーション
 
@@ -182,7 +183,7 @@ REFRESH_COOKIE_SECURE: "true"
 REFRESH_COOKIE_SAMESITE: "lax"
 ```
 
-フロントエンドとAPIが異なるサイトになる配置では、`SameSite=None`と`Secure=true`が必要になる場合があります。その場合は、CSRFトークンまたはOrigin検証も追加します。
+フロントエンドとAPIが異なるサイトになる配置では、`SameSite=None`と`Secure=true`が必要になる場合があります。現行APIはCSRFトークンとOrigin検証を実装済みですが、許可Originを本番URLに限定してください。
 
 可能なら本番では、次のように同一サイトまたは同一オリジンへまとめます。
 
@@ -202,4 +203,4 @@ https://shop.example.com/api/
 - 401時のrefresh再試行は無限ループさせない
 - refreshを複数同時実行しない
 - 商品操作はUI表示だけでなくAPI側でも権限を検証する
-- cross-site Cookie構成に変更する場合はCSRF対策を追加する
+- 現行APIは`refresh` / `logout`にOrigin検証と`csrf_token` Cookieの二重送信を要求する

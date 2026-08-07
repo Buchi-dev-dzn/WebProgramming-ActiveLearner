@@ -57,7 +57,7 @@ app.add_middleware(
     allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-Id", "X-CSRF-Token"],
     expose_headers=["X-Request-Id"],
     max_age=600,
 )
@@ -75,6 +75,8 @@ app.add_middleware(
 | `max_age=600` | プリフライト結果をブラウザが最大10分キャッシュできる |
 
 現在の認証はaccess tokenを`Authorization: Bearer ...`で送り、refresh tokenをHttpOnly Cookieで管理します。そのため、`allow_credentials`は`True`です。許可オリジンにワイルドカードは使用できず、信頼するフロントエンドURLを明示します。
+
+`POST /api/auth/refresh` と `POST /api/auth/logout` は、refresh token Cookieに加えて、`csrf_token` Cookieの値を`X-CSRF-Token`ヘッダーへコピーする二重送信CSRF対策を要求します。
 
 ## 4. プリフライトリクエスト
 
@@ -261,5 +263,5 @@ FastAPIより前のWAFで対象ルートが許可されているか確認しま�
 - 本番では本番フロントエンドのHTTPSオリジンだけを許可する
 - 内部APIをCORSの公開対象にしない
 - 新しいAPIメソッドやヘッダーを追加した際はFastAPIとWAFの両方を確認する
-- Cookie認証へ変更する際はCORSだけでなくCSRF対策も設計する
+- Cookie認証を利用する`refresh` / `logout`には、CORS設定だけでなく実装済みのCSRFトークンとOrigin検証が適用される
 - 可能であれば本番環境は同一オリジンで構成し、CORS依存を減らす

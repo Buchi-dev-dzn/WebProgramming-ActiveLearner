@@ -228,7 +228,7 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --co
 
 - `API Gateway`
   - 現在は `fastapi-app` が API を直接提供している
-  - 将来的に認証認可、API versioning、API 単位の rate limit を独立させる候補
+  - 将来的に認証認可、API versioning、分散rate limitを独立させる候補
 - 本番向けの秘密情報管理
   - Compose は `.env` から鍵とトークンを受け取る。`.env.example`の値は開発・検証専用
   - 本番相当では secrets manager、ローテーション、DB資格情報の定期更新が必要
@@ -241,9 +241,9 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --co
 - WAF/NIPSのレート制限は、PROXY protocolで引き継いだクライアントアドレスをキーにする
 - FastAPIは信頼する内部firewallからのForwardedヘッダーだけを受け付ける
 - NIDSはパケットキャプチャではなくログ監視であり、未知の通信を網羅的には検知しない
-- 認証APIには分散レート制限がなく、複数VM・複数入口の本番構成では外部rate limiterが必要
+- 認証APIには送信元IP・アカウント単位のアプリ内レート制限を実装済み。複数VM・複数入口では外部分散rate limiterが必要
 - 商品画像URLは外部URLを保存するだけで、取得・プロキシはしない。取得処理を追加する場合はSSRF対策が必要
-- 商品・監査イベントの保持期間、削除、バックアップ、鍵ローテーションは未実装
+- 商品・監査イベントの保持期間、削除、バックアップ、鍵ローテーションは運用設計が必要
 
 ## 今後の拡張候補
 
@@ -252,4 +252,4 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --co
 - order / order_items / shipment / review を追加する
 - payment provider 参照を追加し、カード番号や CVV は保存しない設計を維持する
 - 検証スクリプトを一括実行できる形にする
-- 開発用暗号鍵と `SECURITY_SENSOR_TOKEN` を secrets manager 相当へ移す
+- 開発用暗号鍵、DB資格情報、`SECURITY_SENSOR_TOKEN`をsecrets manager相当へ移す
