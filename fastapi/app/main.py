@@ -282,9 +282,10 @@ def token_hmac(value: str) -> bytes:
 
 
 def source_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
+    # Uvicorn resolves the forwarded client address only when the immediate
+    # proxy is explicitly trusted in the container command.  Do not parse
+    # X-Forwarded-For here: accepting it from arbitrary callers lets clients
+    # forge audit identity and rate-limit keys.
     if request.client:
         return request.client.host
     return "unknown"

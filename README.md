@@ -104,7 +104,7 @@ Compose では次の Docker network で境界を分けています。
 | 種別 | エンドポイント |
 | --- | --- |
 | ヘルス / 情報 | `GET /health`, `GET /api/health`, `GET /api/info` |
-| 商品 | `GET /api/products`, `POST /api/products`, `GET /api/product?sku=...`, `POST /api/product/stock` |
+| 商品 | `GET /api/products`, `POST /api/products`, `GET /api/product?sku=...`, `PUT /api/products/{sku}`, `POST /api/product/stock` |
 | 認証 | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`, `GET /api/auth/audit-events` |
 | 出品者プロフィール | `POST /api/seller/profile`, `GET /api/seller/profile` |
 | 監査 / 監視 | `GET /api/security/audit-events`, `GET /api/security/monitoring/summary` |
@@ -139,6 +139,8 @@ PostgreSQL 初期化 SQL は [`postgres/init/001_products.sql`](./postgres/init/
 ## 起動
 
 ```bash
+cp .env.example .env
+# Replace all development values before using this outside an isolated lab.
 docker compose up -d --build
 ```
 
@@ -219,6 +221,8 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --co
   - HIDS/HIPS 相当の改ざん検知とヘルス監視
 - [security-monitoring-addition.md](/home/buchi/WebProgramming-ActiveLearner/security-monitoring-addition.md)
   - 監視レイヤー追加時の判断、検証結果、制約
+- [SECURITY_REVIEW.md](./SECURITY_REVIEW.md)
+  - 実装と設定を突き合わせたセキュリティレビュー、未実装項目、検証範囲
 
 ## 現在未分離のもの
 
@@ -226,11 +230,20 @@ python3 other/test/auth-crypto/check_auth_crypto.py 192.168.64.4 --check-db --co
   - 現在は `fastapi-app` が API を直接提供している
   - 将来的に認証認可、API versioning、API 単位の rate limit を独立させる候補
 - 本番向けの秘密情報管理
-  - Compose 内の鍵とトークンは開発・検証用
-  - 本番相当では secrets manager や環境別の鍵管理へ移す必要がある
+  - Compose は `.env` から鍵とトークンを受け取る。`.env.example`の値は開発・検証専用
+  - 本番相当では secrets manager、ローテーション、DB資格情報の定期更新が必要
 - 物理的な完全分離
   - 現在は 1 台の Linux VM と Docker Engine 上の擬似分離
   - 別ホスト、VLAN、クラウド security group、host firewall まで含む構成は別途設計が必要
+
+## セキュリティレビュー上の重要な制約
+
+- WAF/NIPSのレート制限は、PROXY protocolで引き継いだクライアントアドレスをキーにする
+- FastAPIは信頼する内部firewallからのForwardedヘッダーだけを受け付ける
+- NIDSはパケットキャプチャではなくログ監視であり、未知の通信を網羅的には検知しない
+- 認証APIには分散レート制限がなく、複数VM・複数入口の本番構成では外部rate limiterが必要
+- 商品画像URLは外部URLを保存するだけで、取得・プロキシはしない。取得処理を追加する場合はSSRF対策が必要
+- 商品・監査イベントの保持期間、削除、バックアップ、鍵ローテーションは未実装
 
 ## 今後の拡張候補
 

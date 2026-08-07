@@ -163,7 +163,7 @@ POST /api/internal/security-events
 Header: X-Sensor-Token: <SECURITY_SENSOR_TOKEN>
 ```
 
-この API は `SECURITY_SENSOR_TOKEN` が一致した場合だけイベントを受け付けます。Docker Compose では学習用の固定値 `dev-security-sensor-token` を使っています。本番では secret manager や `.env` で差し替える前提です。
+この API は `SECURITY_SENSOR_TOKEN` が一致した場合だけイベントを受け付けます。値は Compose の必須環境変数から渡し、`.env.example`には学習用の例だけを置いています。本番では secret manager、定期ローテーション、漏えい時の即時無効化が必要です。
 
 ## 追加時の検証記録
 
